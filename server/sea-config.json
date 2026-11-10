@@ -1,0 +1,6 @@
+{
+  "main": "host-dist/server.cjs",
+  "output": "YordleYapperServer.exe",
+  "disableExperimentalSEAWarning": true,
+  "useCodeCache": false
+}

@@ -1,0 +1,10 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Rift Report</title><link rel="stylesheet" href="recap.css"></head><body>
+  <main class="shell">
+    <header class="top"><div class="brand"><span class="crest">✦</span><div><div class="eyebrow">YORDLE YAPPER · MATCH REPORT</div><h1>Rift Report</h1></div></div><button id="close" aria-label="Close recap">×</button></header>
+    <section id="hero" class="hero"><div><span id="result" class="result">MATCH COMPLETE</span><h2 id="headline">The Rift has gone quiet.</h2><p id="subhead">Your local post-game report</p></div><div class="hero-mark">✦</div></section>
+    <nav class="tabs"><button class="tab active" data-tab="scoreboard">Scoreboard</button><button class="tab" data-tab="yordle">Yordle Yapper stats</button><button class="tab hidden" data-tab="chaos">Chaos recap</button></nav>
+    <section id="scoreboard" class="tab-page active"><div class="score-header"><span>PLAYER</span><span>K / D / A</span><span>DMG</span><span>GOLD</span><span>CS</span><span>VISION</span><span>ITEMS</span></div><div id="teams" class="teams"><div class="loading">Gathering the end-game scoreboard…</div></div><p id="score-note" class="footnote"></p></section>
+    <section id="yordle" class="tab-page hidden"><div class="section-title"><span class="section-icon">◉</span><div><h3>What this client heard</h3><p>Local proximity-chat stats from this PC only. No audio is saved.</p></div></div><div id="chat-cards" class="cards"></div><h3 class="table-title">Voices heard nearby</h3><div id="voice-table" class="voice-table"></div></section>
+    <section id="chaos" class="tab-page hidden"><div class="section-title"><span class="section-icon gold">✧</span><div><h3>Rift Ruckus ledger</h3><p>Private-room chaos stays in this recap on this PC.</p></div></div><div id="chaos-cards" class="cards"></div><div id="chaos-list" class="chaos-list"></div></section>
+    <footer><span>Match data is read from the local League client. Yordle Yapper chat stats are measured on this PC.</span><button id="done">DONE</button></footer>
+  </main><script src="recap.js"></script></body></html>

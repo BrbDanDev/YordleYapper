@@ -4,26 +4,26 @@ This guide covers quick Windows friend-group hosting from the app and manual pro
 
 For client-side usage, see the [user guide](user-guide.md).
 
-**License note (AGPLv3).** If you run a *modified* version of the server as a network service, the AGPLv3 requires you to offer its users the corresponding source. Running it unmodified ? or modifying it privately without offering it as a network service ? carries no such obligation.
+**License note (AGPLv3).** If you run a *modified* version of the server as a network service, the AGPLv3 requires you to offer its users the corresponding source. Running it unmodified — or modifying it privately without offering it as a network service — carries no such obligation.
 
 ## What you'll set up for a manual production deployment
 
-Four pieces ? the first three are server-side, and the last one you build once:
+Four pieces — the first three are server-side, and the last one you build once:
 
-1. **The signaling server** ? one small Node container via Docker Compose. Handles room presence, relays the WebRTC handshake, and does the distance?volume math.
-2. **A TURN relay** ? so players behind strict NATs can still connect to each other. Easiest is **Cloudflare Realtime TURN** (nothing to run, generous free tier); or self-host **coturn** if you'd rather not use Cloudflare.
-3. **A reverse proxy for HTTPS** ? Caddy or nginx in front of the server to terminate TLS and forward WebSockets. You almost certainly already run one.
-4. **The client, rebuilt to point at your server** ? a one-time `tauri build` with your server URL baked in, which you then hand to your players.
+1. **The signaling server** — one small Node container via Docker Compose. Handles room presence, relays the WebRTC handshake, and does the distance→volume math.
+2. **A TURN relay** — so players behind strict NATs can still connect to each other. Easiest is **Cloudflare Realtime TURN** (nothing to run, generous free tier); or self-host **coturn** if you'd rather not use Cloudflare.
+3. **A reverse proxy for HTTPS** — Caddy or nginx in front of the server to terminate TLS and forward WebSockets. You almost certainly already run one.
+4. **The client, rebuilt to point at your server** — a one-time `tauri build` with your server URL baked in, which you then hand to your players.
 
-**The fast path is Steps 1?4 below** ? Cloudflare TURN + Docker + Caddy ? and that's all most people need. The coturn section near the end is only if you'd rather run your own relay.
+**The fast path is Steps 1–4 below** — Cloudflare TURN + Docker + Caddy — and that's all most people need. The coturn section near the end is only if you'd rather run your own relay.
 
 ## Architecture in one paragraph
 
-The server is a ~500-LOC Node process: WebSocket signaling (room presence + offer/answer/ICE relay + per-client XY coords store), per-pair distance ? volume math against that store, and TURN credential issuance (Cloudflare Realtime TURN by default; coturn HMAC as a fallback). Single container deployed via Docker Compose. Stateless modulo the in-memory rooms table (which now also holds the latest coords per client) ? restarts drop active rooms, clients reconnect automatically. See [`architecture.md`](architecture.md) for the full picture.
+The server is a ~500-LOC Node process: WebSocket signaling (room presence + offer/answer/ICE relay + per-client XY coords store), per-pair distance → volume math against that store, and TURN credential issuance (Cloudflare Realtime TURN by default; coturn HMAC as a fallback). Single container deployed via Docker Compose. Stateless modulo the in-memory rooms table (which now also holds the latest coords per client) — restarts drop active rooms, clients reconnect automatically. See [`architecture.md`](architecture.md) for the full picture.
 
 ## One-click friend-group hosting from the Windows app
 
-The Windows release includes `YordleYapperServer.exe` beside the main app executable. Keep both files together. Install the official ngrok CLI once and authenticate it once with your own ngrok account. Then open **Settings ? Match voice room ? Voice server ? Host a server with ngrok ? START HOSTING**. Yordle Yapper starts the current signaling server on port 3100, starts `ngrok http 3100`, reads its HTTPS endpoint from ngrok's local agent API, and selects that address on the host PC. Copy the address to the other players; they paste it into the same Voice server field. The default hosted service is unchanged when hosting is stopped.
+The Windows release includes `YordleYapperServer.exe` beside the main app executable. Keep both files together. Install the official ngrok CLI once and authenticate it once with your own ngrok account. Then open **Settings → Match voice room → Voice server → Host a server with ngrok → START HOSTING**. Yordle Yapper starts the current signaling server on port 3100, starts `ngrok http 3100`, reads its HTTPS endpoint from ngrok's local agent API, and selects that address on the host PC. Copy the address to the other players; they paste it into the same Voice server field. The default hosted service is unchanged when hosting is stopped.
 
 The ngrok CLI and its saved account token are managed by ngrok; the app does not collect the token. ngrok's agent tunnel is an outbound TLS connection and does not need router port-forwarding. The endpoint carries HTTP requests and WebSocket traffic back to the local server. The URL is public while hosting is active; treat it like an invite secret, share it only with your group, and stop hosting after the match. Free ngrok development addresses can change after restart, so share the newly shown address each time. [ngrok agent endpoint docs](https://ngrok.com/docs/gateway/endpoints/http), [agent overview](https://ngrok.com/docs/gateway/agent).
 
@@ -35,24 +35,24 @@ The companion server helper is a separate file (about 91 MB); it keeps ordinary 
 
 - A Linux host with Docker (or Node 18+ for the no-Docker path).
 - A domain name, with a DNS record pointing at your host, plus a wildcard or specific TLS cert (Caddy or another auto-cert reverse proxy makes the cert painless).
-- A Cloudflare account if you're going the recommended TURN route. The free tier covers 1 TB egress/month ? sufficient for thousands of voice-hours.
-- Only for the final "rebuild the client" step: the **Rust + Tauri build toolchain** on whatever machine you build on (see [`CONTRIBUTING.md`](../CONTRIBUTING.md)). It's a heavier install than the server ? nothing else here needs it.
+- A Cloudflare account if you're going the recommended TURN route. The free tier covers 1 TB egress/month — sufficient for thousands of voice-hours.
+- Only for the final "rebuild the client" step: the **Rust + Tauri build toolchain** on whatever machine you build on (see [`CONTRIBUTING.md`](../CONTRIBUTING.md)). It's a heavier install than the server — nothing else here needs it.
 
-## Step 1 ? Get TURN credentials (Cloudflare Realtime TURN, recommended)
+## Step 1 — Get TURN credentials (Cloudflare Realtime TURN, recommended)
 
-For users behind symmetric NAT (mobile networks, some corporate setups), peers need a TURN relay to connect. The default deployment uses Cloudflare Realtime TURN ? 1 TB/month egress free, no infrastructure to maintain, $0.05/GB after.
+For users behind symmetric NAT (mobile networks, some corporate setups), peers need a TURN relay to connect. The default deployment uses Cloudflare Realtime TURN — 1 TB/month egress free, no infrastructure to maintain, $0.05/GB after.
 
 1. Sign in to the [Cloudflare Dashboard](https://dash.cloudflare.com).
-2. **Realtime** ? **TURN** ? **Create TURN Key**. Name it something memorable (e.g. `lolproxchat-prod`).
+2. **Realtime** → **TURN** → **Create TURN Key**. Name it something memorable (e.g. `lolproxchat-prod`).
 3. Copy both values that appear:
-   - **TURN Key ID** ? UUID-like identifier
-   - **API Token** ? secret bearer token, **shown only once at creation**
+   - **TURN Key ID** — UUID-like identifier
+   - **API Token** — secret bearer token, **shown only once at creation**
 
-If you'd rather self-host coturn instead, skip to ? "Optional: self-host coturn" below.
+If you'd rather self-host coturn instead, skip to § "Optional: self-host coturn" below.
 
-**To avoid surprise bills:** don't add a payment method to your Cloudflare account. The free tier becomes a hard cap ? service degrades at quota instead of charging.
+**To avoid surprise bills:** don't add a payment method to your Cloudflare account. The free tier becomes a hard cap — service degrades at quota instead of charging.
 
-## Step 2 ? Write `.env`
+## Step 2 — Write `.env`
 
 Next to the compose file:
 
@@ -64,9 +64,9 @@ TRUSTED_PROXIES=private
 
 The compose file is at [`docker-compose.proxchat.yml`](../docker-compose.proxchat.yml) in the repo root. `.env` is already in `.gitignore`.
 
-Those three lines are the whole file for a Cloudflare-TURN deployment. `TRUSTED_PROXIES=private` fits the reverse proxy of Step 3, on the same host or Docker network; if a CDN sits in front of that proxy, or there is no proxy at all, read ? "Client IP and rate limits" under Operational notes first. (You'll spot an `ENCRYPTION_KEY` in the compose ? it's a leftover from the old pre-v0.3 position-encryption path that the current server ignores. Leave it unset.)
+Those three lines are the whole file for a Cloudflare-TURN deployment. `TRUSTED_PROXIES=private` fits the reverse proxy of Step 3, on the same host or Docker network; if a CDN sits in front of that proxy, or there is no proxy at all, read § "Client IP and rate limits" under Operational notes first. (You'll spot an `ENCRYPTION_KEY` in the compose — it's a leftover from the old pre-v0.3 position-encryption path that the current server ignores. Leave it unset.)
 
-## Step 3 ? Deploy via Docker
+## Step 3 — Deploy via Docker
 
 ```bash
 docker compose -f docker-compose.proxchat.yml up -d
@@ -80,7 +80,7 @@ proxchat.your-domain.com {
 }
 ```
 
-Caddy upgrades WebSockets automatically, and it strips incoming `X-Forwarded-*` headers unless you set `trusted_proxies`, so the value the server sees is the one Caddy observed. Nothing else to configure ? unless a CDN sits in front, in which case read ? "Client IP and rate limits" below before you add `trusted_proxies`.
+Caddy upgrades WebSockets automatically, and it strips incoming `X-Forwarded-*` headers unless you set `trusted_proxies`, so the value the server sees is the one Caddy observed. Nothing else to configure — unless a CDN sits in front, in which case read § "Client IP and rate limits" below before you add `trusted_proxies`.
 
 For nginx, ensure **all five** of these:
 
@@ -92,7 +92,7 @@ proxy_set_header Upgrade $http_upgrade;
 proxy_set_header Connection "upgrade";
 ```
 
-The two address headers are not optional. nginx sends neither unless you tell it to, so without them every one of your users is rate-limited as if they were a single client at the proxy's address: the 20-connection WebSocket cap becomes a *global* 20-connection cap and your server goes quietly dead at user 21. Set both rather than one ? the server cross-checks them, and a mismatch (which is what a client supplying its own `X-Forwarded-For` produces) makes it discard both and fall back to the proxy's address.
+The two address headers are not optional. nginx sends neither unless you tell it to, so without them every one of your users is rate-limited as if they were a single client at the proxy's address: the 20-connection WebSocket cap becomes a *global* 20-connection cap and your server goes quietly dead at user 21. Set both rather than one — the server cross-checks them, and a mismatch (which is what a client supplying its own `X-Forwarded-For` produces) makes it discard both and fall back to the proxy's address.
 
 ### Or deploy directly (no Docker)
 
@@ -103,9 +103,9 @@ npm run build
 PORT=3100 TURN_KEY_ID=<id> TURN_KEY_API_TOKEN=<token> npm start
 ```
 
-Put a reverse proxy in front of this too. If you deliberately run it without one ? a LAN-only deployment, say ? add `TRUSTED_PROXIES=off` so the rate limits key on the real connection rather than on a header the client can choose.
+Put a reverse proxy in front of this too. If you deliberately run it without one — a LAN-only deployment, say — add `TRUSTED_PROXIES=off` so the rate limits key on the real connection rather than on a header the client can choose.
 
-## Step 4 ? Verify
+## Step 4 — Verify
 
 ```bash
 # Health (server up, accepting requests)
@@ -163,12 +163,12 @@ no-cli
 Forward to the coturn host:
 
 - UDP 3478 (TURN/STUN)
-- UDP 49152?49252 (relay range, must match `min-port` / `max-port`)
+- UDP 49152–49252 (relay range, must match `min-port` / `max-port`)
 - TCP 5349 if you add TURNS (next section)
 
 The signaling server's `/turn-credentials` endpoint issues short-lived HMAC credentials so the static auth secret never leaves your infrastructure.
 
-### TURNS (TLS) ? recommended
+### TURNS (TLS) — recommended
 
 TURNS protects credentials in transit, looks like generic HTTPS to firewalls, and helps users on restrictive corporate networks connect. If you already run Caddy / nginx-proxy-manager / Traefik with a wildcard cert for your domain, you can mount the cert dir into coturn:
 
@@ -200,7 +200,7 @@ echo "" | openssl s_client -connect turn.your-domain.com:5349 \
 
 ## Updating an existing deployment
 
-If your remote is a hand-synced directory of `server/` files (rather than a `git` checkout on the host), **updates are a file-sync, not a `git pull`** ? and a partial sync silently runs stale code: clients talk to an old server and proximity quietly breaks with no error. (This has bitten the project in production.)
+If your remote is a hand-synced directory of `server/` files (rather than a `git` checkout on the host), **updates are a file-sync, not a `git pull`** — and a partial sync silently runs stale code: clients talk to an old server and proximity quietly breaks with no error. (This has bitten the project in production.)
 
 Use [`scripts/deploy-server.sh`](../scripts/deploy-server.sh) to do it safely. It builds + tests locally first, backs up the remote source, syncs **all** of `server/src/` plus the build files, rebuilds the container, and then verifies the new code is actually serving before declaring success. It never touches the remote compose file, so your secrets stay put.
 
@@ -211,13 +211,13 @@ PROXCHAT_COMPOSE_DIR=/path/to/the/compose/project \
 ./scripts/deploy-server.sh
 ```
 
-`PROXCHAT_COMPOSE_DIR` is separate from `PROXCHAT_DEPLOY_PATH` on purpose, and getting it wrong is the failure worth knowing about. The build context and the compose project are usually different directories ? especially if the stack is one `include:` fragment among many. Running `docker compose up` inside the *source* directory starts a second, competing stack instead of updating the running one, and the source directory may well still contain an old `docker-compose.yml` that looks plausible and is not what is deployed. Find the real one with:
+`PROXCHAT_COMPOSE_DIR` is separate from `PROXCHAT_DEPLOY_PATH` on purpose, and getting it wrong is the failure worth knowing about. The build context and the compose project are usually different directories — especially if the stack is one `include:` fragment among many. Running `docker compose up` inside the *source* directory starts a second, competing stack instead of updating the running one, and the source directory may well still contain an old `docker-compose.yml` that looks plausible and is not what is deployed. Find the real one with:
 
 ```bash
 docker inspect <container> --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}'
 ```
 
-Two more things the script handles that catch people out by hand: the source directory is often root-owned, so files are staged in `/tmp` and installed with `sudo`; and the container usually does **not** publish its port to the host, because the reverse proxy reaches it over a docker network ? so `curl localhost:3100` fails on a perfectly healthy deployment, and verification has to run inside the container.
+Two more things the script handles that catch people out by hand: the source directory is often root-owned, so files are staged in `/tmp` and installed with `sudo`; and the container usually does **not** publish its port to the host, because the reverse proxy reaches it over a docker network — so `curl localhost:3100` fails on a perfectly healthy deployment, and verification has to run inside the container.
 
 ## Operational notes
 
@@ -225,23 +225,23 @@ Two more things the script handles that catch people out by hand: the source dir
 - **Health checks.** Docker Compose includes a built-in healthcheck that hits `/health` every 30 s. The README's status badge also pulls from this endpoint via Shields.io.
 - **TLS termination is your responsibility.** Caddy is the recommended default since it handles cert renewal end-to-end. nginx + certbot also works but renewal is a separate concern.
 - **WebSocket upgrades.** Any reverse proxy you use must support and forward the WebSocket upgrade headers, or `/ws` will fail even if `/health` returns 200.
-- **Rate limiting.** The server ships with rate limits, a body-size cap, and WebSocket connection/message limits built in (`server/src/rate-limit.ts::LIMITS`). Defaults: `/turn-credentials` 60/min per IP; `/compute-volumes` keyed per player (IP + name) and sized for the max scan rate, plus a generous per-IP backstop and a 256 KB body cap; WebSocket 20 connections per IP + 64 KB per message. Legitimate clients never trigger them. If you serve an unusual environment (e.g. a CG-NAT'd ISP where many subscribers share one public IP), the constants in `LIMITS` are the single place to adjust + rebuild. The limits themselves have no env-var knobs by design ? that keeps the server config trivially auditable. `TRUSTED_PROXIES` (below) is the one exception, and it isn't limit tuning: it describes your deployment's topology, which the build can't know.
+- **Rate limiting.** The server ships with rate limits, a body-size cap, and WebSocket connection/message limits built in (`server/src/rate-limit.ts::LIMITS`). Defaults: `/turn-credentials` 60/min per IP; `/compute-volumes` keyed per player (IP + name) and sized for the max scan rate, plus a generous per-IP backstop and a 256 KB body cap; WebSocket 20 connections per IP + 64 KB per message. Legitimate clients never trigger them. If you serve an unusual environment (e.g. a CG-NAT'd ISP where many subscribers share one public IP), the constants in `LIMITS` are the single place to adjust + rebuild. The limits themselves have no env-var knobs by design — that keeps the server config trivially auditable. `TRUSTED_PROXIES` (below) is the one exception, and it isn't limit tuning: it describes your deployment's topology, which the build can't know.
 
 - **Client IP and rate limits.** Every per-IP limit keys off the address the server resolves for the request, so getting that address right is the difference between working limits and either a bypass or a dead server.
 
-  - **A CDN in front is the case to get right.** With Cloudflare (or any CDN) ? your proxy ? the server, the address your proxy appends is the *CDN edge*, not the player. Left alone, every user on the planet collapses into one bucket and the 20-connection WebSocket cap becomes a global one. Fix it by naming both hops: `TRUSTED_PROXIES=private,<the CDN's published ranges>`. The server then walks `X-Forwarded-For` from the right, steps past your proxy and past the edge because both are listed, and stops at the first address that isn't ? the player. Configuring the proxy to trust the CDN as well (Caddy: `trusted_proxies` inside the `reverse_proxy` block; nginx: `set_real_ip_from` + `real_ip_header CF-Connecting-IP`) is still worth doing for your own logs, but the server no longer depends on it.
-  - **`TRUSTED_PROXIES` values.** A comma- or space-separated list of the addresses and CIDRs *your own* proxies connect from. `private` is shorthand for the loopback / RFC1918 / link-local set, which covers a reverse proxy on the same host or Docker network ? that is the Step 3 setup, so `TRUSTED_PROXIES=private` is the normal value. `off` ignores forwarding headers entirely and keys on the TCP peer. Entries that aren't addresses or CIDRs are dropped with a warning, and so is a `/0` ? "every address on the internet is my proxy" is the bypass this list exists to close, not a topology.
-  - **`TRUST_PROXY` is deprecated; it still works.** It counted how many of your proxies append to `X-Forwarded-For` and took the entry at that index. The count assumes every entry is genuine, so a client that pads the header with `n-1` invented entries moves the counted index onto a value it wrote ? and since nothing checks that value against a proxy list, it can rotate it per request for an unlimited supply of fresh buckets. (This is the opposite of the one-bucket failure this guide used to describe: honest requests still key correctly, which is exactly why the bypass is quiet.) At `TRUST_PROXY=1` there is nothing to pad past, so a single-proxy deployment was never exposed. Leave it set and nothing changes on upgrade; set `TRUSTED_PROXIES` and it is ignored. `docker-compose.proxchat.yml` passes both through; set `TRUSTED_PROXIES` in your `.env` (or the compose file on the box).
+  - **A CDN in front is the case to get right.** With Cloudflare (or any CDN) → your proxy → the server, the address your proxy appends is the *CDN edge*, not the player. Left alone, every user on the planet collapses into one bucket and the 20-connection WebSocket cap becomes a global one. Fix it by naming both hops: `TRUSTED_PROXIES=private,<the CDN's published ranges>`. The server then walks `X-Forwarded-For` from the right, steps past your proxy and past the edge because both are listed, and stops at the first address that isn't — the player. Configuring the proxy to trust the CDN as well (Caddy: `trusted_proxies` inside the `reverse_proxy` block; nginx: `set_real_ip_from` + `real_ip_header CF-Connecting-IP`) is still worth doing for your own logs, but the server no longer depends on it.
+  - **`TRUSTED_PROXIES` values.** A comma- or space-separated list of the addresses and CIDRs *your own* proxies connect from. `private` is shorthand for the loopback / RFC1918 / link-local set, which covers a reverse proxy on the same host or Docker network — that is the Step 3 setup, so `TRUSTED_PROXIES=private` is the normal value. `off` ignores forwarding headers entirely and keys on the TCP peer. Entries that aren't addresses or CIDRs are dropped with a warning, and so is a `/0` — "every address on the internet is my proxy" is the bypass this list exists to close, not a topology.
+  - **`TRUST_PROXY` is deprecated; it still works.** It counted how many of your proxies append to `X-Forwarded-For` and took the entry at that index. The count assumes every entry is genuine, so a client that pads the header with `n-1` invented entries moves the counted index onto a value it wrote — and since nothing checks that value against a proxy list, it can rotate it per request for an unlimited supply of fresh buckets. (This is the opposite of the one-bucket failure this guide used to describe: honest requests still key correctly, which is exactly why the bypass is quiet.) At `TRUST_PROXY=1` there is nothing to pad past, so a single-proxy deployment was never exposed. Leave it set and nothing changes on upgrade; set `TRUSTED_PROXIES` and it is ignored. `docker-compose.proxchat.yml` passes both through; set `TRUSTED_PROXIES` in your `.env` (or the compose file on the box).
   - **Forwarding headers are only read from a listed proxy.** `X-Forwarded-For` / `X-Real-IP` are honoured only when the connection arrives from an address in `TRUSTED_PROXIES` (or, under the deprecated `TRUST_PROXY`, from loopback / a private range / link-local). A client that reaches the server directly arrives from somewhere else and its headers are ignored, so publishing `:3100` doesn't hand it a way to pick its own bucket. Header values that aren't IP addresses are discarded rather than becoming keys, and an unreadable entry stops the walk instead of being stepped over. `X-Real-IP` is read only when there is no `X-Forwarded-For` to walk, because Caddy passes a client's `X-Real-IP` through untouched.
   - **Publishing the port bypasses your proxy.** `docker-compose.proxchat.yml` publishes `3100:3100` on all interfaces so a containerised Caddy can reach it. If your proxy runs on the host, change it to `127.0.0.1:3100:3100` and nothing outside can reach the server except through TLS.
   - **Rootless Docker, Podman and Docker Desktop break the peer gate.** Their port forwarding rewrites the source address to the bridge gateway, so *every* inbound connection looks private and forwarding headers are trusted from anyone. Naming the gateway alone (`TRUSTED_PROXIES=172.17.0.1`) does not help, because that is the address every client arrives from. On those runtimes, either bind the published port to `127.0.0.1` as above or set `TRUSTED_PROXIES=off`. Rootful Docker (the normal Linux install, including Unraid) preserves the real source address and is unaffected.
-  - **No proxy at all ? LAN or plain `http://` on a port.** Every client then connects from a private address, so `TRUSTED_PROXIES=private` would treat any of them as a proxy and let it supply its own `X-Forwarded-For`. Set `TRUSTED_PROXIES=off` for that deployment; the limits then key on the real TCP peer.
-  - **Confirm what the process resolved.** The server prints `proxchat-server trust-proxy: ?` next to its listen line at startup ? it names the mode, so a deployment still on the deprecated count says so in as many words. `docker logs proxchat-server | head` settles it without guessing. When requests are being rejected it also logs one aggregate line a minute ? counts by reason plus how many distinct buckets each limiter holds, with no addresses or player names in it. Bucket counts stuck at ~1 while `/health` reports many rooms is the signature of everyone collapsing into a single bucket.
+  - **No proxy at all — LAN or plain `http://` on a port.** Every client then connects from a private address, so `TRUSTED_PROXIES=private` would treat any of them as a proxy and let it supply its own `X-Forwarded-For`. Set `TRUSTED_PROXIES=off` for that deployment; the limits then key on the real TCP peer.
+  - **Confirm what the process resolved.** The server prints `proxchat-server trust-proxy: …` next to its listen line at startup — it names the mode, so a deployment still on the deprecated count says so in as many words. `docker logs proxchat-server | head` settles it without guessing. When requests are being rejected it also logs one aggregate line a minute — counts by reason plus how many distinct buckets each limiter holds, with no addresses or player names in it. Bucket counts stuck at ~1 while `/health` reports many rooms is the signature of everyone collapsing into a single bucket.
   - **Setting it on an existing deployment.** [`scripts/deploy-server.sh`](../scripts/deploy-server.sh) deliberately never touches the remote `docker-compose.yml`, so adding `TRUSTED_PROXIES` to the compose file in this repo does **not** reach a running host. Add the line to the compose file on the box (or its `.env`) and `docker compose up -d` there.
 
 ## Selecting a server address manually
 
-Clients can select the server at runtime: **Settings ? Match voice room ? Voice server**. Enter the base address (no `/ws` suffix), for example `https://voice.example.com`, and use the same address on every player's app. The default service remains selected until changed. The selection is saved on that PC; changing it during a match is blocked, and the signaling connection switches immediately while out of a match. The one-click ngrok setup fills this field automatically on the host PC.
+Clients can select the server at runtime: **Settings → Match voice room → Voice server**. Enter the base address (no `/ws` suffix), for example `https://voice.example.com`, and use the same address on every player's app. The default service remains selected until changed. The selection is saved on that PC; changing it during a match is blocked, and the signaling connection switches immediately while out of a match. The one-click ngrok setup fills this field automatically on the host PC.
 
 For manual self-hosting, the host runs this repo's `server/` service using the Docker or Node instructions above, then shares an address reachable by every participant. For public internet hosting, use a public endpoint and TLS. Plain HTTP is permitted by the client only for local/private network addresses.
 
@@ -251,8 +251,7 @@ The signaling protocol remains compatible with older server builds. Current clie
 
 You probably don't need to. The default deployment at `proxchat.dant123.com` is what 99% of users use, and a private deployment makes sense in only two cases:
 
-- **Trust.** You don't want a third party (me) to be able to see your room's positions. The server holds them in process memory, so whoever runs it can read them. See [`threat-model.md`](threat-model.md) ? "Server operator can read all positions".
+- **Trust.** You don't want a third party (me) to be able to see your room's positions. The server holds them in process memory, so whoever runs it can read them. See [`threat-model.md`](threat-model.md) § "Server operator can read all positions".
 - **Capacity.** You're running a player base large enough to justify operational cost. (For perspective: 1000 concurrent users at full Opus 128 kbps would be ~16 MB/s of voice, well within any small-VPS budget.)
 
 If neither applies, save yourself the ops work.
-                                                                                                            

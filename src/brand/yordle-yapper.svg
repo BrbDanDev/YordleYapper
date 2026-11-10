@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Yordle Yapper microphone">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8870df"/>
+      <stop offset="1" stop-color="#3c5eb5"/>
+    </linearGradient>
+    <linearGradient id="mic" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff2c8"/>
+      <stop offset="1" stop-color="#eac36e"/>
+    </linearGradient>
+  </defs>
+  <circle cx="64" cy="64" r="61" fill="#171c30" stroke="#f1cf80" stroke-width="3"/>
+  <path d="M19 43 12 24l25 13M109 43l7-19-25 13" fill="#eac36e" stroke="#f8e5ad" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="38" cy="48" r="4" fill="#172035"/><circle cx="90" cy="48" r="4" fill="#172035"/>
+  <path d="M45 56c0-11 8-20 19-20s19 9 19 20v17c0 11-8 20-19 20s-19-9-19-20z" fill="url(#mic)" stroke="#fff4d2" stroke-width="3"/>
+  <path d="M36 68v5c0 16 12 29 28 29s28-13 28-29v-5M64 102v12M49 115h30" fill="none" stroke="#f2d17f" stroke-width="6" stroke-linecap="round"/>
+  <path d="M54 55h20M54 65h20M54 75h20" stroke="#5a4d9e" stroke-width="4" stroke-linecap="round"/>
+  <path d="M29 64c-4 4-4 10 0 14M99 64c4 4 4 10 0 14" fill="none" stroke="#89dec4" stroke-width="4" stroke-linecap="round"/>
+</svg>

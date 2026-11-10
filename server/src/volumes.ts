@@ -1,0 +1,551 @@
+const crypto = globalThis.crypto;
+
+// Per-request diagnostic logging for the tiered-volume path. Off unless the
+// server is started with DEBUG_VOLUMES=1. Logs each /compute-volumes
+// decision (requester team/range + per-peer team/distance/result) so
+// cross-client issues (e.g. asymmetric audibility) are diagnosable from the
+// server alone instead of needing both clients' debug logs.
+const DEBUG_VOLUMES = process.env.DEBUG_VOLUMES === '1';
+
+function roomLogLabel(room: string): string {
+  return /^p[a-z0-9_-]{12,48}\./i.test(room) ? '[private]' : room;
+}
+
+// Rift Voices scales quiet voices from a shorter floor; louder voices reach
+// farther and can carry a reverb tail to the 3600u hard cap.
+const MAX_HEARING_RANGE = 2300;
+const QUIET_VOICE_RANGE = 1250;
+const LEGACY_MAX_HEARING_RANGE = 1200;
+const MAX_SHOUT_RANGE = 2600;
+const MAX_ECHO_RANGE = 3600;
+const SHOUT_LEVEL_THRESHOLD = 0.55;
+const MAX_ECHO_DELAY_SECONDS = 2;
+
+// Inside this radius voices are audible at full volume. Overall ranges are
+// shorter than the previous release; attenuation begins here and the selected\n// mode cap determines where voices stop.
+const FULL_VOLUME_RANGE = 200;
+// Max age of an encrypted position blob the server will accept before
+// rejecting it as stale. Tuned to absorb common Windows-clock drift
+// (NTP service can lag 10-30s in the wild — we saw this in issue #7
+// where one user's clock was ~12s behind real time and every blob was
+// being rejected, breaking proximity audio entirely on the other side).
+// Security tradeoff: this is the replay window for a captured blob.
+// 30s is fine because the volume side-channel is already coarsened by
+// quantization + jitter (see docs/threat-model.md Part 1).
+const BLOB_MAX_AGE_MS = 30_000;
+
+// v0.1 request shape — peers field carries encrypted XY blobs from each peer.
+// Kept for back-compat during the v0.2 transition; clients still on the old
+// path send this. See computeVolumes() below.
+export interface VolumeRequest {
+  myPosition: { x: number; y: number };
+  peers: Record<string, string>; // name -> encrypted blob (base64)
+}
+
+// v0.2 request shape — peers are read from server-side room state instead
+// of being shipped in the request. See computeVolumesFromRoom() below.
+export interface VolumeRequestV2 {
+  myPosition: { x: number; y: number };
+  roomId: string;
+  name: string;
+  // When true, the requester hears allies by proximity (same distance falloff as
+  // enemies) instead of always at full volume. Per-user preference; optional for
+  // backward compatibility — absent means global/full (the default, #22).
+  allyProximity?: boolean;
+  // IGNORED since v0.5.9, and kept only so the shape of what older clients
+  // send is documented where someone will find it.
+  //
+  // "Voice on camera" (#36) used to work by letting the request name the point
+  // it wanted to hear from, which let a client listen in on players who had
+  // never turned the feature on. The camera is now published to room state
+  // over `coords` like any other position, read from there for the requester
+  // as well, and only used when both players in a pair have published one.
+  // See computeTieredVolumes.
+  listenPosition?: { x: number; y: number };
+  // Since v0.5.23. The requester has lost track of itself and `myPosition` is
+  // where it was last seen, which it no longer vouches for: score its
+  // teammates from there (ally proximity) and leave everyone else out. Only
+  // ever narrows the response; the client drops cross-team peers too.
+  alliesOnly?: boolean;
+  riftVoices?: boolean;
+  /** Ignore published camera position for Rift range when camera is used only for stereo direction. */
+  championRangeOnly?: boolean;
+  deadVoiceMode?: 'off' | 'ghosts' | 'ghosts-nearby';
+}
+
+export interface VolumeResponse {
+  myBlob: string;   // v0.1 path only; v0.2 returns "" since there's nothing to broadcast
+  peerVolumes: Record<string, number>;
+  /** Distance-derived echo settings for Rift Voices peers only. */
+  peerEcho?: Record<string, { mix: number; delay: number }>;
+}
+
+/**
+ * How stale a peer's last-reported XY can be before the server skips them in
+ * volume computation. The client sends coords on every positionTick (~10 Hz)
+ * and stops sending after CV has been holding/extrapolating for >2 s, so a
+ * 5 s window means at most ~3 s of phantom audio after a peer drops or
+ * loses tracking — short enough to avoid hearing players who are no longer
+ * where the server thinks they are, generous enough to absorb a brief WSS
+ * stall without flickering them silent.
+ */
+const STALE_POSITION_MS = 5_000;
+
+/**
+ * How long a teammate the tracker has lost goes on being scored, by players
+ * with ally proximity on, at the last position anyone saw them at. A
+ * champion walks ~350 units a second, so past this the last position says
+ * little about where they are and they go back to full volume.
+ *
+ * Before v0.5.23 an ally with no fresh position was at full volume straight
+ * away. Trackers lose players often in a lane full of icons, and a 2026-10-09
+ * test heard other lanes "all the time" on the strength of it.
+ *
+ * Allies only, never cross-team: a position the client has disowned must not
+ * keep an enemy hearing them. The client applies the same window to itself.
+ */
+export const LOST_ALLY_ANCHOR_MS = 20_000;
+
+// ---------- helpers ----------
+
+function isFinitePoint(p: unknown): p is { x: number; y: number } {
+  return !!p && typeof p === 'object' &&
+    typeof (p as any).x === 'number' && typeof (p as any).y === 'number' &&
+    isFinite((p as any).x) && isFinite((p as any).y);
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    const byte = parseInt(hex.substring(i, i + 2), 16);
+    if (Number.isNaN(byte)) throw new Error('Invalid hex in encryption key');
+    bytes[i / 2] = byte;
+  }
+  return bytes;
+}
+
+async function importKey(hexKey: string): Promise<CryptoKey> {
+  if (!/^[0-9a-fA-F]{64}$/.test(hexKey)) {
+    throw new Error('ENCRYPTION_KEY must be 64 hex chars (256-bit)');
+  }
+  const keyBytes = hexToBytes(hexKey);
+  return crypto.subtle.importKey('raw', keyBytes.buffer as ArrayBuffer, 'AES-GCM', false, [
+    'encrypt',
+    'decrypt',
+  ]);
+}
+
+// ---------- public API ----------
+
+export function calculateVolume(distance: number): number {
+  if (distance >= LEGACY_MAX_HEARING_RANGE) return 0.0;
+  if (distance <= FULL_VOLUME_RANGE) return 1.0;
+  // Ease volume down across nearly the whole radius, so distance is audible
+  // early instead of holding a broad full-volume near-field plateau.
+  //
+  // Reverted v0.1.26 quantization (5 buckets) + ±5% jitter in v0.1.33:
+  // The bucket transitions produced audible "cliffs" in real gameplay,
+  // especially when peer CV was jittering between teal blobs near each
+  // other (issue #14 / #7 logs). The anti-cheat precision-protection
+  // argument was marginal at our user scale; jitter alone wasn't
+  // restoring smoothness because each new sample still crossed bucket
+  // boundaries. Reverted to continuous output; client-side EMA handles
+  // transitions naturally. See docs/threat-model.md Part 1 for the
+  // updated mitigation table.
+  const t = (distance - FULL_VOLUME_RANGE) / (LEGACY_MAX_HEARING_RANGE - FULL_VOLUME_RANGE);
+  const clamped = Math.max(0, Math.min(1, t));
+  return 1 - clamped * clamped * (3 - 2 * clamped);
+}
+
+export async function encryptPosition(
+  hexKey: string,
+  x: number,
+  y: number,
+): Promise<string> {
+  const key = await importKey(hexKey);
+  const timestamp = Date.now();
+  const payload = new TextEncoder().encode(
+    JSON.stringify({ x, y, t: timestamp }),
+  );
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    payload,
+  );
+  const combined = new Uint8Array(iv.length + encrypted.byteLength);
+  combined.set(iv);
+  combined.set(new Uint8Array(encrypted), iv.length);
+  return Buffer.from(combined).toString('base64');
+}
+
+export async function decryptPosition(
+  hexKey: string,
+  blob: string,
+): Promise<{ x: number; y: number } | null> {
+  try {
+    const key = await importKey(hexKey);
+    const combined = new Uint8Array(Buffer.from(blob, 'base64'));
+    const iv = combined.slice(0, 12);
+    const ciphertext = combined.slice(12);
+    const decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      ciphertext,
+    );
+    const payload = JSON.parse(new TextDecoder().decode(decrypted));
+    if (typeof payload.t !== 'number') {
+      return null;
+    }
+    const ageMs = Date.now() - payload.t;
+    if (Math.abs(ageMs) > BLOB_MAX_AGE_MS) {
+      // Surface clock skew as a structured log so we can spot patterns in
+      // user-reported voice issues (silent rejection used to swallow this).
+      console.warn(
+        '[volumes] blob rejected: age=' + ageMs +
+        'ms exceeds limit ' + BLOB_MAX_AGE_MS + 'ms (client clock skew?)',
+      );
+      return null;
+    }
+    return { x: payload.x, y: payload.y };
+  } catch {
+    return null;
+  }
+}
+
+export async function computeVolumes(
+  body: VolumeRequest,
+  encryptionKey: string,
+): Promise<VolumeResponse> {
+  // Validate input
+  if (
+    !body.myPosition ||
+    typeof body.myPosition.x !== 'number' ||
+    typeof body.myPosition.y !== 'number' ||
+    !isFinite(body.myPosition.x) ||
+    !isFinite(body.myPosition.y)
+  ) {
+    throw new Error('Invalid position');
+  }
+  if (body.peers && typeof body.peers !== 'object') {
+    throw new Error('Invalid peers');
+  }
+
+  const myBlob = await encryptPosition(
+    encryptionKey,
+    body.myPosition.x,
+    body.myPosition.y,
+  );
+
+  const peerVolumes: Record<string, number> = {};
+  for (const [name, peerBlob] of Object.entries(body.peers ?? {})) {
+    const peerPos = await decryptPosition(encryptionKey, peerBlob);
+    if (!peerPos) {
+      peerVolumes[name] = 0;
+      continue;
+    }
+    const dx = body.myPosition.x - peerPos.x;
+    const dy = body.myPosition.y - peerPos.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    peerVolumes[name] = calculateVolume(distance);
+  }
+
+  return { myBlob, peerVolumes };
+}
+
+// ---------- v0.2 path: positions live in server-side room state ----------
+
+/**
+ * Reads peer XY positions from server-side room state (populated by
+ * 'coords' WSS messages) and computes pairwise distance volumes for the
+ * requester. No encryption involved on either side — the request is on
+ * HTTPS, the room state lives in process memory.
+ *
+ * `getPositions` is injected so this stays unit-testable without a real
+ * RoomManager. Pass `(roomId, exceptName) => rooms.getRoomPositions(...)`
+ * from the HTTP handler.
+ */
+export function computeVolumesFromRoom(
+  body: VolumeRequestV2,
+  getPositions: (roomId: string, exceptName: string, staleMs: number) => Record<string, { x: number; y: number }>,
+): VolumeResponse {
+  if (
+    !body.myPosition ||
+    typeof body.myPosition.x !== 'number' ||
+    typeof body.myPosition.y !== 'number' ||
+    !isFinite(body.myPosition.x) ||
+    !isFinite(body.myPosition.y)
+  ) {
+    throw new Error('Invalid position');
+  }
+  if (typeof body.roomId !== 'string' || !body.roomId) {
+    throw new Error('Invalid roomId');
+  }
+  if (typeof body.name !== 'string' || !body.name) {
+    throw new Error('Invalid name');
+  }
+
+  const positions = getPositions(body.roomId, body.name, STALE_POSITION_MS);
+  const peerVolumes: Record<string, number> = {};
+  for (const [name, pos] of Object.entries(positions)) {
+    const dx = body.myPosition.x - pos.x;
+    const dy = body.myPosition.y - pos.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    peerVolumes[name] = calculateVolume(distance);
+  }
+
+  // v0.2 doesn't produce a myBlob — there's nothing for the requester to
+  // re-broadcast (server already has their position from the most recent
+  // 'coords' message). Return empty string for type-shape compatibility
+  // with the legacy response.
+  return { myBlob: '', peerVolumes };
+}
+
+// ---------- v0.3 path: tiered proximity (team-aware) ----------
+
+export interface TieredRoomClient {
+  name: string;
+  team?: 'ORDER' | 'CHAOS';
+  position?: { x: number; y: number; updatedMs: number };
+  /** Camera centre, present only while the client has voice on camera ON. */
+  camera?: { x: number; y: number; updatedMs: number };
+  /** The position it reported before disowning it (RoomManager.clearPosition). */
+  lastSeen?: { x: number; y: number; updatedMs: number };
+  voiceLevel?: number;
+  isDead?: boolean;
+}
+
+/**
+ * Where to score an ally from: their fresh position, else the latest one
+ * they reported within LOST_ALLY_ANCHOR_MS (stale, or disowned since), else
+ * nowhere.
+ */
+function allyAnchor(
+  peer: TieredRoomClient,
+  now: number,
+): { x: number; y: number; updatedMs: number } | undefined {
+  const latest = [peer.position, peer.lastSeen]
+    .filter((p): p is { x: number; y: number; updatedMs: number } => !!p)
+    .sort((a, b) => b.updatedMs - a.updatedMs)[0];
+  return latest && latest.updatedMs >= now - LOST_ALLY_ANCHOR_MS ? latest : undefined;
+}
+
+/**
+ * Closest approach between two sets of points: the smallest distance from any
+ * point in `a` to any point in `b`.
+ *
+ * Used with the requester's listening points on one side and the peer's
+ * champion on the other. With voice on camera off on either side that is just
+ * champion-to-champion; with it on for BOTH, the requester listens from its
+ * champion and its camera, and hears the peer if either is close enough.
+ */
+export function closestApproach(
+  a: readonly { x: number; y: number }[],
+  b: readonly { x: number; y: number }[],
+): number {
+  let best = Infinity;
+  for (const p of a) {
+    for (const q of b) {
+      const d = Math.hypot(p.x - q.x, p.y - q.y);
+      if (d < best) best = d;
+    }
+  }
+  return best;
+}
+
+/**
+ * v0.3 tiered proximity. Server-authoritative team filter.
+ *
+ * Allies (same team as requester) come back at 1.0 regardless of distance,
+ * unless the requester has ally proximity on; then they fade like enemies,
+ * except an ally with no fresh position, who stays at 1.0. Cross-team peers (enemies) come back at their distance-based
+ * volume out to the selected mode's hearing range: they fade
+ * in very faintly as they enter that radius and grow louder as they close.
+ * Out-of-range peers are absent from the response entirely (the server
+ * simply doesn't tell the requester they exist — a modified client cannot
+ * bypass the cutoff to hear distant enemies).
+ *
+ * When the requester has no team set (legacy v0.2 client), every peer goes
+ * through the same distance falloff (team-blind).
+ */
+export function computeTieredVolumes(
+  body: VolumeRequestV2,
+  getRoomClients: (roomId: string) => TieredRoomClient[],
+  chaosRangeBoost = false,
+  forcedDeadVoiceMode: 'inherit' | 'ghosts' | 'ghosts-nearby' | 'off' = 'inherit',
+): VolumeResponse {
+  if (!body.myPosition ||
+      typeof body.myPosition.x !== 'number' || typeof body.myPosition.y !== 'number' ||
+      !isFinite(body.myPosition.x) || !isFinite(body.myPosition.y)) {
+    throw new Error('Invalid position');
+  }
+  if (typeof body.roomId !== 'string' || !body.roomId) throw new Error('Invalid roomId');
+  if (typeof body.name !== 'string' || !body.name) throw new Error('Invalid name');
+
+  const clients = getRoomClients(body.roomId);
+  const me = clients.find(c => c.name === body.name);
+  if (!me) {
+    if (DEBUG_VOLUMES) {
+      console.log('[volumes] req name=' + JSON.stringify(body.name) +
+        ' NOT FOUND in room ' + roomLogLabel(body.roomId) + ' (known: ' +
+        clients.map(c => JSON.stringify(c.name)).join(',') + ')');
+    }
+    return { myBlob: '', peerVolumes: {} };
+  }
+
+  // Cross-team peers are audible out to the selected mode's range,
+  // fading to silence at the edge. `legacy` (no team) means we can't tell
+  // allies from enemies, so everyone goes through the distance falloff.
+  const legacy = me.team === undefined;
+
+  const now = Date.now();
+  const deadVoiceMode = forcedDeadVoiceMode !== 'inherit' ? forcedDeadVoiceMode : body.deadVoiceMode ?? 'ghosts';
+  const cutoff = now - STALE_POSITION_MS;
+  // Our own camera, read from room state rather than from the request. A
+  // stale one counts as absent, the same as a stale position.
+  const myCamera = me.camera && me.camera.updatedMs >= cutoff ? me.camera : undefined;
+  const peerVolumes: Record<string, number> = {};
+  const peerEcho: Record<string, { mix: number; delay: number }> = {};
+  const trace: string[] = [];
+
+  for (const peer of clients) {
+    if (peer.name === me.name) continue;
+
+    const meDead = me.isDead === true;
+    const peerDead = peer.isDead === true;
+    if (peerDead && deadVoiceMode === 'off') {
+      if (DEBUG_VOLUMES) trace.push(peer.name + '[dead voice disabled]=skip');
+      continue;
+    }
+    if (meDead && !peerDead && deadVoiceMode === 'ghosts') {
+      if (DEBUG_VOLUMES) trace.push(peer.name + '[dead listener ghosts-only]=skip');
+      continue;
+    }
+    if (meDead && peerDead && deadVoiceMode !== 'off') {
+      peerVolumes[peer.name] = 1.0;
+      peerEcho[peer.name] = { mix: 0.1, delay: 0.08 };
+      if (DEBUG_VOLUMES) trace.push(peer.name + '[ghost-channel]=1.0');
+      continue;
+    }
+    if (peerDead && !meDead && deadVoiceMode === 'ghosts') continue;
+
+    const ally = !legacy && peer.team === me.team;
+    if (body.alliesOnly === true && !ally) {
+      if (DEBUG_VOLUMES) trace.push(peer.name + '[team=' + peer.team + ' ALLIES-ONLY]=skip');
+      continue;
+    }
+    const anchor = ally ? allyAnchor(peer, now) : undefined;
+    const allyUnplaced = ally && !anchor;
+    if (ally && (!body.allyProximity || allyUnplaced) && !(peerDead && deadVoiceMode === 'ghosts-nearby')) {
+      // Global ally voice (ally proximity off): always full volume, no
+      // proximity. We even skip the staleness check — an ally in SCANNING /
+      // long-hold hasn't reported coords recently but is still actively
+      // transmitting audio. What makes that safe is that a truly-gone peer is
+      // removed from room state: RoomManager.leave on a clean close, and the
+      // WebSocket heartbeat (server/src/heartbeat.ts) for a half-open socket
+      // that never fires one. Without the heartbeat this branch holds a
+      // vanished ally at 1.0 for as long as the OS takes to time the TCP
+      // connection out.
+      //
+      // With ally proximity on (the client default since v0.5.18), allies fall
+      // through to the distance falloff below like cross-team peers — except
+      // one we cannot place. A teammate whose tracker lost them is scored at
+      // where they were last seen for LOST_ALLY_ANCHOR_MS; with no position
+      // in that window (game start, a long loss, after RESET) they are heard
+      // by their team at full volume until they are found again, the same
+      // fallback the requester's own client applies while it cannot place
+      // itself. Silencing them instead cut players out of their own team's
+      // voice for as long as their tracking was lost.
+      peerVolumes[peer.name] = 1.0;
+      if (DEBUG_VOLUMES) trace.push(peer.name + '[ally team=' + peer.team + (allyUnplaced ? ' UNPLACED' : '') + ']=1.0');
+      continue;
+    }
+
+    // An ally here has ally proximity on and somewhere to be scored at,
+    // possibly where they were last seen; anyone else needs a fresh position.
+    const peerPos = anchor ?? peer.position;
+    if (!peerPos) {
+      if (DEBUG_VOLUMES) trace.push(peer.name + '[cross team=' + peer.team + ' NO-POS]=skip');
+      continue;
+    }
+    if (!anchor && peerPos.updatedMs < cutoff) {
+      if (DEBUG_VOLUMES) trace.push(peer.name + '[cross team=' + peer.team + ' STALE]=skip');
+      continue;
+    }
+    const tag = (ally ? 'ally' : 'cross') + ' team=' + peer.team +
+      (anchor && (anchor !== peer.position || anchor.updatedMs < cutoff) ? ' LAST-SEEN' : '');
+
+    // "Voice on camera" (#36) is an opt-in BETWEEN TWO PLAYERS, not a setting
+    // one of them applies to the other. Both sides have to be publishing a
+    // camera for the requester's camera to count; if this peer has the setting
+    // off, their camera is absent from room state and the pair is scored
+    // champion-to-champion — so a player who leaves it off can only be heard
+    // by someone actually near them on the map.
+    //
+    // It is one-way: your camera is a point you listen FROM, never a point you
+    // are heard at, so the peer is always scored at their champion. Panning
+    // onto a fight lets you hear it without the people in it hearing you; they
+    // hear you only if their own camera is on you. A v0.5.9 test build made it
+    // two-way, and players testing it found hearing someone who happened to
+    // glance at you unpredictable — being heard is anchored to where your
+    // champion stands.
+    //
+    // The requester's own camera is read from ROOM STATE, not the request, so
+    // a client cannot listen from a point without having published it — which
+    // is also what makes publishing it the opt-in. A request cannot assert a
+    // listening point of its own (the old `listenPosition` field is ignored).
+    const deadCameraHear = meDead && deadVoiceMode === 'ghosts-nearby' && !!myCamera;
+    const bothOptedIn = body.championRangeOnly !== true && !!myCamera && !!peer.camera &&
+      peer.camera.updatedMs >= cutoff;
+    const myPoints = deadCameraHear ? [body.myPosition, myCamera!] : bothOptedIn ? [body.myPosition, myCamera!] : [body.myPosition];
+    const peerPoints = [peerPos];
+
+    const dist = closestApproach(myPoints, peerPoints);
+    const voiceLevel = Math.max(0, Math.min(1, peer.voiceLevel ?? 0));
+    const shouting = body.riftVoices === true && voiceLevel >= SHOUT_LEVEL_THRESHOLD;
+    const shoutProgress = shouting
+      ? Math.max(0, Math.min(1, (voiceLevel - SHOUT_LEVEL_THRESHOLD) / (1 - SHOUT_LEVEL_THRESHOLD)))
+      : 0;
+    const riftVoices = body.riftVoices === true;
+    const rangeBoost = chaosRangeBoost ? 1.5 : 1;
+    const baseRange = (riftVoices ? MAX_HEARING_RANGE : LEGACY_MAX_HEARING_RANGE) * rangeBoost;
+    // Quiet speech has its own shorter reach. Range grows smoothly with the
+    // measured voice level and reaches the normal radius before shout range.
+    const quietProgress = Math.max(0, Math.min(1, voiceLevel / SHOUT_LEVEL_THRESHOLD));
+    const quietRange = QUIET_VOICE_RANGE + quietProgress * (baseRange - QUIET_VOICE_RANGE);
+    const shoutRange = baseRange + shoutProgress * ((MAX_SHOUT_RANGE * rangeBoost) - baseRange);
+    const range = shouting
+      ? baseRange + shoutProgress * ((MAX_ECHO_RANGE * rangeBoost) - baseRange)
+      : (riftVoices ? quietRange : baseRange);
+    const fullVolumeRange = riftVoices
+      ? Math.min(FULL_VOLUME_RANGE, range * (FULL_VOLUME_RANGE / baseRange))
+      : FULL_VOLUME_RANGE;
+    if (dist >= range) {
+      if (DEBUG_VOLUMES) trace.push(peer.name + '[' + tag + ' dist=' + Math.round(dist) + ' >= range=' + range + ']=skip');
+      continue;
+    }
+    const falloff = Math.max(0, Math.min(1, (dist - fullVolumeRange) / (range - fullVolumeRange)));
+    const volume = dist <= fullVolumeRange ? 1 : 1 - falloff * falloff * (3 - 2 * falloff);
+    peerVolumes[peer.name] = volume;
+    if (peerDead) peerEcho[peer.name] = { mix: 0.1, delay: 0.08 };
+    if (shouting && dist > shoutRange) {
+      const echoProgress = Math.max(0, Math.min(1, (dist - shoutRange) / (MAX_ECHO_RANGE * rangeBoost - shoutRange)));
+      peerEcho[peer.name] = {
+        mix: 0.06 + echoProgress * 0.48,
+        delay: 0.12 + echoProgress * (MAX_ECHO_DELAY_SECONDS - 0.12),
+      };
+    }
+    if (DEBUG_VOLUMES) trace.push(peer.name + '[' + tag + (bothOptedIn ? ' camera' : '') + ' dist=' + Math.round(dist) + ']=' + volume.toFixed(2));
+  }
+
+  if (DEBUG_VOLUMES) {
+    const listenTag = myCamera
+      ? ' myCamera=(' + Math.round(myCamera.x) + ',' + Math.round(myCamera.y) + ')'
+      : '';
+    console.log('[volumes] req me=' + JSON.stringify(me.name) +
+      ' team=' + me.team + ' legacy=' + legacy + ' range=' + (body.riftVoices === true ? 'quiet=1250 base=2300 shout<=2600 reverb<=3600' : LEGACY_MAX_HEARING_RANGE) + listenTag +
+      ' | ' + (trace.length ? trace.join(' ') : '(no peers)'));
+  }
+
+  return { myBlob: '', peerVolumes, peerEcho };
+}

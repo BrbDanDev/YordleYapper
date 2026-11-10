@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Yordle Yapper</title>
+  <link rel="stylesheet" href="overlay.css">
+</head>
+<body>
+  <div id="panel" class="panel">
+    <div id="drag-handle" class="widget-header" data-tauri-drag-region>
+      <span class="brand-lockup" data-tauri-drag-region title="Yordle Yapper">
+        <img class="brand-mark" src="../brand/yordle-yapper.svg" alt="">
+        <span class="brand-name" data-tauri-drag-region>Yordle Yapper</span>
+      </span>
+      <div class="header-controls">
+        <button id="btn-self-mute" class="icon-btn" data-i18n-title="header.selfMute" title="Toggle self mute">MIC</button>
+        <button id="btn-mute-all" class="icon-btn" data-i18n-title="header.muteAll" title="Mute everyone">VOL</button>
+        <button id="btn-reset-header" class="icon-btn" data-i18n="header.posLabel" data-i18n-title="header.pos" title="Wrong position? Reset tracking, then move your champion.">POS</button>
+        <button id="btn-settings" class="icon-btn" data-i18n="header.settingsLabel" data-i18n-title="header.settings" title="Settings">SET</button>
+        <button id="btn-collapse" class="icon-btn" data-i18n-title="header.collapse" title="Collapse">&raquo;</button>
+      </div>
+    </div>
+    <div id="reset-notice" class="reset-notice hidden"></div>
+    <div id="player-list" class="player-list">
+      <div class="empty-state" data-i18n="players.waiting">Waiting for nearby players...</div>
+    </div>
+
+    <div id="settings-panel" class="settings-panel hidden">
+      <div class="settings-intro">
+        <strong data-i18n="settings.title">Configure your voice</strong>
+        <span data-i18n="settings.subtitle">These choices stay on your PC.</span>
+        <div class="setting-row language-row"><label for="language" data-i18n="settings.language">Language</label><select id="language"></select></div>
+      </div>
+      <details class="settings-group" open>
+        <summary data-i18n="settings.hearingGroup">How you hear the Rift</summary>
+        <div class="setting-row setting-row-stack">
+          <label for="hearing-mode" data-i18n="settings.hearingMode">Listening mode</label>
+          <select id="hearing-mode">
+            <option value="camera" data-i18n="settings.modeScreen">On-screen voices</option>
+            <option value="nearby" data-i18n="settings.modeNearby">Nearby voices</option>
+            <option value="rift">Rift Voices (loudness + spatial)</option>
+          </select>
+        </div>
+        <p id="hearing-mode-description" class="setting-hint" aria-live="polite"></p>
+        <div class="setting-row setting-row-stack"><label for="dead-voice-mode">When I die</label><select id="dead-voice-mode"><option value="ghosts">Ghost chat</option><option value="ghosts-nearby">Ghosts + nearby living</option><option value="off">No dead chat</option></select></div>
+        <p class="setting-hint">Ghost chat connects dead players globally, adds a light reverb, and lets you listen from your camera. Nearby living lets you also hear living players from your camera and lets them hear you near your death location. Your host may force a room-wide choice.</p>
+        <div id="visible-enemies-row" class="setting-row">
+          <label data-i18n="settings.visibleOnly">Only hear visible enemies</label>
+          <button id="btn-visible-enemies" class="toggle-btn" aria-pressed="true">ON</button>
+        </div>
+        <p id="visible-enemies-hint" class="setting-hint" data-i18n="settings.visibleOnlyHint">Uses minimap vision. Enemies hidden by fog, brush, or invisibility go quiet.</p>
+        <div class="setting-row">
+          <label data-i18n="settings.allyProximity">Teammate distance audio</label>
+          <button id="btn-ally-proximity" class="toggle-btn">ON</button>
+        </div>
+        <p class="setting-hint" data-i18n="settings.allyProximityHintShort">ON fades teammates with distance. OFF keeps your team at full volume anywhere.</p>
+        <div id="camera-listen-row" class="setting-row">
+          <label data-i18n="settings.cameraListen">Also hear from camera</label>
+          <button id="btn-camera-listen" class="toggle-btn">ON</button>
+        </div>
+        <p id="camera-listen-hint" class="setting-hint" data-i18n="settings.cameraListenHintShort">Adds voices around your camera view. This can reveal activity beyond your champion's vision.</p>
+        <div id="rift-stereo-camera-row" class="setting-row hidden">
+          <label data-i18n="settings.riftStereoCamera">Rift stereo follows camera</label>
+          <button id="btn-rift-stereo-camera" class="toggle-btn" aria-pressed="false">OFF</button>
+        </div>
+        <p id="rift-stereo-camera-hint" class="setting-hint hidden" data-i18n="settings.riftStereoCameraHint">Voice direction follows your camera; hearing distance and volume stay based on your champion.</p>
+      </details>
+
+      <details id="host-options-group" class="settings-group hidden">
+        <summary>Host options · private room</summary>
+        <p id="host-options-hint" class="setting-hint">Choose options before the match. They publish when you join your private room as host.</p>
+        <div class="setting-row"><label for="host-mode">Listening mode</label><select id="host-mode"><option value="inherit">Let each player choose</option><option value="nearby">Nearby voices</option><option value="camera">On-screen voices</option><option value="rift">Rift Voices</option></select></div>
+        <div class="setting-row"><label for="host-muffling">Occlusion filtering</label><select id="host-muffling"><option value="inherit">Player choice</option><option value="on">Force on</option><option value="off">Force off</option></select></div>
+        <div class="setting-row"><label for="host-spatial">3D stereo</label><select id="host-spatial"><option value="inherit">Player choice</option><option value="on">Force on</option><option value="off">Force mono</option></select></div>
+        <div class="setting-row"><label for="host-tracking">Tracking rate</label><select id="host-tracking"><option value="0">Default · 36 FPS</option><option value="42">42 FPS</option><option value="48">48 FPS</option></select></div>
+        <div class="setting-row"><label for="host-dead-voice">Dead-player chat</label><select id="host-dead-voice"><option value="inherit">Player choice</option><option value="ghosts">Ghosts only</option><option value="ghosts-nearby">Ghosts + nearby living</option><option value="off">No dead chat</option></select></div>
+        <p class="setting-hint">Ghosts only lets dead players hear one another globally. Ghosts + nearby living also lets dead players hear voices around their camera and lets living players hear dead voices near the death location. No dead chat mutes dead players until they revive.</p>
+        <div class="host-chaos-card">
+          <div class="setting-row"><label for="host-chaos-enabled">Chaos Mode</label><button id="host-chaos-enabled" class="toggle-btn" aria-pressed="false">OFF</button></div>
+          <p class="setting-hint">Private room only. You can switch it on or off during the match; effects disappear when it is off.</p>
+          <div class="setting-row"><label for="host-chaos-interval">Chaos every</label><select id="host-chaos-interval"><option value="20">20 seconds</option><option value="30">30 seconds</option><option value="45" selected>45 seconds</option><option value="60">1 minute</option><option value="90">1.5 minutes</option><option value="120">2 minutes</option></select></div>
+          <div class="setting-row"><label for="host-chaos-duration">Effect length</label><select id="host-chaos-duration"><option value="0.5">Short</option><option value="0.75">A little shorter</option><option value="1" selected>Normal</option><option value="1.5">Longer</option><option value="2">Much longer</option></select></div>
+        </div>
+      </details>
+
+      <details class="settings-group" open>
+        <summary data-i18n="settings.matchRoom">Match voice room</summary>
+        <details class="server-choice">
+          <summary>Voice server · online / self-hosted</summary>
+          <label class="sr-only" for="voice-server-url">Voice server address</label>
+          <input id="voice-server-url" class="room-code-input" type="url" spellcheck="false" placeholder="https://voice.example.com">
+          <div class="room-actions"><button id="btn-voice-server-save" class="secondary-btn">USE THIS SERVER</button><button id="btn-voice-server-default" class="secondary-btn">USE DEFAULT</button></div>
+          <p id="voice-server-status" class="setting-hint" aria-live="polite">Everyone in a room must use the same server address. Self-hosting below sets this PC up automatically. The default service is unchanged.</p>
+          <div class="host-server-card">
+            <strong>Host a server with ngrok</strong>
+            <p class="setting-hint">One-time setup: install the official ngrok CLI, then run <code>ngrok config add-authtoken YOUR_TOKEN</code> in a terminal. The app starts its current voice server and ngrok, then gives you a shareable HTTPS address. Your token stays in ngrok's own config.</p>
+            <p class="setting-hint host-exposure-warning">Anyone who gets the address can reach the server while it is running. Share it only with your group; stop hosting when the match is over.</p>
+            <div class="room-actions"><button id="btn-self-host-start" class="secondary-btn">START HOSTING</button><button id="btn-self-host-stop" class="secondary-btn hidden">STOP HOSTING</button></div>
+            <p id="self-host-status" class="setting-hint" aria-live="polite">ngrok must be installed and authenticated on the host PC.</p>
+          </div>
+        </details>
+        <p class="setting-hint" data-i18n="settings.roomHint">Leave blank to join the automatic room for your match. Share a private code with friends to make a separate room for that same match.</p>
+        <label class="sr-only" for="private-room-code" data-i18n="settings.roomCode">Private room code</label>
+        <input id="private-room-code" class="room-code-input" type="text" maxlength="48" autocomplete="off" spellcheck="false" data-i18n-placeholder="settings.roomPlaceholder" placeholder="Blank = automatic match room">
+        <div class="room-actions">
+          <button id="btn-generate-room" class="secondary-btn" data-i18n="settings.generateCode">MAKE CODE</button>
+          <button id="btn-copy-room" class="secondary-btn" data-i18n="settings.copyCode">COPY</button>
+          <button id="btn-clear-room" class="secondary-btn" data-i18n="settings.clearCode">CLEAR</button>
+        </div>
+        <p id="room-code-status" class="setting-hint" aria-live="polite"></p>
+        <p id="room-connection-status" class="setting-hint" aria-live="polite">Not connected to a voice room.</p>
+      </details>
+
+      <details class="settings-group">
+        <summary data-i18n="settings.afterMatchGroup">After the match</summary>
+        <div class="setting-row"><label for="btn-match-recap" data-i18n="settings.matchRecap">Show match recap</label><button id="btn-match-recap" class="toggle-btn" aria-pressed="false">OFF</button></div>
+        <p class="setting-hint" data-i18n="settings.matchRecapHint">When enabled, opens your League scoreboard and local voice recap after a match. Off by default.</p>
+      </details>
+
+      <details class="settings-group">
+        <summary>Match voice replay</summary>
+        <div class="setting-row"><label for="btn-replay-consent">Allow voice recording this match</label><button id="btn-replay-consent" class="toggle-btn" aria-pressed="false">OFF</button></div>
+        <p class="setting-hint">Every Yordle Yapper player in the room must turn this on. If anyone opts out or joins without consenting, recording stops. Each consenting player records a local replay file; no voice recording is uploaded to the server.</p>
+        <p id="replay-consent-status" class="setting-hint" aria-live="polite">Replay capture is off. Voice is not recorded.</p>
+        <div class="room-actions"><button id="btn-open-replay-folder" class="secondary-btn">REPLAY FOLDER</button><button id="btn-load-replay" class="secondary-btn">LOAD VOICE REPLAY</button></div>
+        <input id="replay-file" type="file" accept=".yyr,application/vnd.yordleyapper.replay" class="hidden">
+        <p id="replay-playback-status" class="setting-hint" aria-live="polite">Load a .yyr file, then open that match in League Replay. Voices follow League's replay clock and free camera.</p>
+      </details>
+
+      <details class="settings-group">
+        <summary data-i18n="settings.audioGroup">Microphone and audio</summary>
+        <div class="setting-row"><label data-i18n="settings.language">Language</label><select id="language"></select></div>
+        <div class="setting-row"><label data-i18n="settings.inputDevice">Microphone</label><select id="input-device"><option value="" data-i18n="settings.default">Default</option></select></div>
+        <div class="setting-row"><label data-i18n="settings.outputDevice">Headphones / speakers</label><select id="output-device"><option value="" data-i18n="settings.default">Default</option></select></div>
+        <div class="setting-row"><label for="btn-spatial-audio">3D stereo voice</label><button id="btn-spatial-audio" class="toggle-btn" aria-pressed="true">ON</button></div>
+        <p class="setting-hint">Moves voices around you with HRTF headphones audio. Turn off for mono.</p>
+        <div class="setting-row"><label for="btn-voice-muffling">Occlusion voice filter</label><button id="btn-voice-muffling" class="toggle-btn" aria-pressed="true">ON</button></div>
+        <p class="setting-hint">Low-pass filters distant or minimap-hidden voices. They may be in fog, brush, or invisible; the minimap cannot tell which.</p>
+        <div class="setting-row"><label data-i18n="settings.appAudio">Separate OBS audio</label><button id="btn-app-audio" class="toggle-btn">ON</button></div>
+        <p class="setting-hint" data-i18n="settings.appAudioHintShort">For OBS application capture. Headphones help prevent echo.</p>
+        <div class="setting-row"><label data-i18n="settings.inputMode">Microphone mode</label><select id="input-mode"><option value="always" data-i18n="settings.alwaysOpen">Always on</option><option value="ptt" data-i18n="settings.pushToTalk">Push to talk</option></select></div>
+        <div class="setting-row"><label data-i18n="settings.pttKey">Push-to-talk key</label><button id="btn-bind-ptt" class="secondary-btn">`</button></div>
+        <div class="setting-row"><label data-i18n="settings.toggleKey">Mute toggle key</label><button id="btn-bind-toggle" class="secondary-btn">(unbound)</button></div>
+        <div class="setting-row"><label data-i18n="settings.micVolume">Mic volume</label><div class="setting-value-group"><input id="input-volume" type="range" min="0" max="100" value="100"><span id="volume-label" class="setting-value-label">100</span></div></div>
+      </details>
+
+      <details class="settings-group">
+        <summary data-i18n="settings.privacyGroup">Privacy and tracking</summary>
+        <div class="setting-row"><label for="btn-adaptive-tracking">Adaptive tracking load</label><button id="btn-adaptive-tracking" class="toggle-btn" aria-pressed="true">ON</button></div>
+        <p class="setting-hint">Adjusts minimap scan rate from measured frame cost to ease CPU load. Private host tracking rules take priority.</p>
+        <div class="setting-row"><label data-i18n="settings.forceTurn">Hide my IP</label><button id="btn-force-turn" class="toggle-btn">ON</button></div>
+        <p class="setting-hint" data-i18n="settings.forceTurnHintShort">Relays voice so other players don't see your public IP; may add latency.</p>
+        <div class="setting-row"><label data-i18n="settings.wrongPosition">Tracking wrong?</label><button id="btn-reset-position" class="secondary-btn" data-i18n="settings.reset">RESET</button></div>
+        <div class="setting-row"><label data-i18n="settings.sharedReset">Help everyone re-find their icon</label><button id="btn-shared-reset" class="toggle-btn">ON</button></div>
+      </details>
+
+      <details class="settings-group">
+        <summary data-i18n="settings.maintenanceGroup">Diagnostics and updates</summary>
+        <div class="setting-row"><label data-i18n="settings.debug">Diagnostic mode</label><button id="btn-debug" class="toggle-btn">OFF</button></div>
+        <section id="voice-debug" class="voice-debug hidden" aria-label="Voice diagnostics simulator">
+          <strong>Voice lab · local only</strong>
+          <p class="setting-hint">Local audio simulation only. Click a map location to play the single test speaker relative to your champion or camera.</p>
+          <div class="voice-map-wrap"><img id="debug-filter-thumb" class="hidden voice-map" alt="Click the detected minimap to place a local test speaker"><span id="voice-sim-marker" class="voice-map-marker hidden" aria-hidden="true"></span></div>
+          <p id="voice-sim-placement" class="setting-hint" aria-live="polite">Start the sound check, then click a location on the map.</p>
+          <div class="setting-row"><label id="voice-sim-loudness-title" for="voice-sim-loudness">Simulated voice loudness</label><div class="setting-value-group"><input id="voice-sim-loudness" type="range" min="0" max="100" value="40"><span id="voice-sim-loudness-label" class="setting-value-label">40</span></div></div>
+          <p id="voice-sim-range" class="setting-hint" aria-live="polite"></p>
+          <div class="setting-row"><label for="voice-sim-muffling">Hidden / distant filter</label><button id="voice-sim-muffling" class="toggle-btn active" aria-pressed="true">ON</button></div>
+          <div class="setting-row"><label for="voice-sim-hidden">Mark placed speaker hidden</label><button id="voice-sim-hidden" class="toggle-btn" aria-pressed="false">OFF</button></div>
+          <div class="setting-row"><label for="voice-sim-stereo">HRTF stereo</label><button id="voice-sim-stereo" class="toggle-btn active" aria-pressed="true">ON</button></div>
+          <div class="room-actions"><button id="voice-sim-start" class="secondary-btn">ENABLE LOCAL AUDIO</button></div>
+          <div class="room-actions"><button id="voice-sim-record" class="secondary-btn">RECORD TEST VOICE</button><button id="voice-sim-clear-recording" class="secondary-btn" disabled>CLEAR RECORDING</button></div>
+          <p class="setting-hint">Recording is kept in memory and played locally. The app temporarily mutes your live room mic while recording, then restores its previous state.</p>
+          <p id="voice-sim-status" class="setting-hint" aria-live="polite">Ready. Click the map to play one local test voice.</p>
+        </section>
+        <div class="setting-row"><label data-i18n="settings.debugLogs">Diagnostic files</label><button id="btn-open-logs" class="secondary-btn" data-i18n="settings.open">OPEN</button></div>
+        <div class="setting-row"><label data-i18n="settings.autoUpdate">Check for updates automatically</label><button id="btn-autoupdate" class="toggle-btn">OFF</button></div>
+        <div class="setting-row"><label data-i18n="settings.updates">Updates</label><button id="btn-check-update" class="secondary-btn" data-i18n="settings.check">CHECK</button></div>
+        <div id="update-status" class="status-hint"></div>
+        <div id="debug-info" class="hidden status-hint"></div>
+      </details>
+    </div>
+  </div>
+  <script src="../background/background.js"></script>
+  <script src="overlay.js"></script>
+</body>
+</html>

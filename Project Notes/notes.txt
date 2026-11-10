@@ -1,0 +1,195 @@
+Yordle Yapper â€” project notes
+Last reviewed: 2026-11-10
+
+WORKSPACE
+- Untouched source base: sibling `.research-lolproxchat`, commit c29802e.
+- Implementation copy: this `Yordle Yapper` folder. Keep the base untouched unless asked otherwise.
+- v0.6.0 local Windows x64 build: `Finished Builds/v0.6.0/lolproxchat.exe`; SHA-256 is recorded in that folder's `BUILD.txt`.
+
+FINDINGS AND CONSTRAINTS
+- Desktop is Tauri 2 / Rust + TypeScript/WebView2; signaling server is Node.
+- Automatic room IDs derive from the current match roster. Optional invite code adds a room namespace without changing match scope. This is not a standalone lobby or an account authorization system. The signaling operator can see room IDs, but client and server diagnostic logs redact private IDs.
+- CameraHearing matches roster champion icons against local minimap observations. The Nearby voices visibility filter uses this local evidence; it cannot raycast terrain or guarantee exact handling of all stealth/vision mechanics. The new filter sends no player coordinates.
+- SmartScreen depends on file/publisher reputation, not app metadata. There is no trusted signing identity configured here; unsigned releases can warn. See Microsoft's current guidance: https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation
+- Keep the updater's canonical filename `lolproxchat.exe`, package name, storage identifier and wire protocol stable.
+
+IMPLEMENTED IN v0.6.0
+- Yordle Yapper brand mark, matching app icons, refreshed settings UI and larger window sized to the panel.
+- Clear On-screen voices / Nearby voices mode picker, visibility filter, and improved control descriptions.
+- Optional generated private match-room code; blank retains automatic room discovery.
+- Speaker portrait clipping fix and private room ID log redaction.
+- Documentation, version/changelog, notes and versioned Finished Builds folders.
+- SmartScreen limitation documented; cannot be solved by this code-only change.
+
+VERIFICATION
+- `npm ci` completed; npm reported 21 advisories in the app dependency tree (6 low, 10 moderate, 4 high, 1 critical). No dependency auto-upgrades were applied.
+- `npm ci --prefix server` completed; server dependency audit reported 9 advisories (1 low, 1 moderate, 5 high, 2 critical). No dependency auto-upgrades were applied.
+- `npm run build:prod` passed; only webpack bundle/model size warnings remain.
+- `npm run build --prefix server` passed.
+- `npx tauri build --no-bundle` passed for v0.6.0. Finished artifact is unsigned. Tauri reported the existing `.app` identifier suffix recommendation; identifier was preserved for compatibility.
+- No test suites were run.
+
+IMPLEMENTED IN v0.7.0
+- Add Rift Voices as a third mode with server-calculated, loudness-dependent range from 1350 to 1900 game units; local microphone RMS is smoothed and quantized before presence broadcast, and existing peer-gain easing smooths audible range transitions.
+- Add actual voice processing: smoothly changing high-pass and low-pass filters for minimap-hidden and distant voices, plus HRTF moving panning around the champion or camera box. Effects apply in both normal WebAudio output and OBS/app output.
+- Preserve stereo through the worklet and Rust jitter-buffer output; mono preference centres audio. Host can force mode, muffling, stereo/mono, and tracking rate in a private room. Server accepts those changes only from the current host; first member hosts, next member succeeds on departure, and automatic match rooms have no host menu.
+- Raise tracking default to 36 FPS; private-room hosts can select 42 or 48 FPS. Remove the former general debug scan-rate slider.
+- Improve title truncation, clarify Rift mode descriptions, and update README/user guide/changelog.
+
+LIMITS
+- Minimap absence is an occlusion hint only; it cannot tell fog of war from brush or invisibility. Nearby mode's explicit visible-only setting still silences hidden enemies; Rift Voices instead applies the voice filter.
+- Host rules are authoritative for compatible clients at the signaling layer; a modified client can ignore local audio policy. The first person to enter a code room becomes host, so share room codes only with intended players.
+- SmartScreen warning remains possible because the executable is unsigned.
+
+VERIFICATION FOR v0.7.0
+- `npm run build:prod` passed; webpack reports existing model/bundle size warnings.
+- `npm run build --prefix server` passed.
+- `cargo check --release` passed.
+- `npx tauri build --no-bundle` passed; Windows x64 artifact is `Finished Builds/v0.7.0/lolproxchat.exe` with SHA-256 in `Finished Builds/v0.7.0/BUILD.txt`.
+- Automated test suites were not run.
+IMPLEMENTED IN v0.7.1
+- Add a Debug-only Voice Lab with three local synthetic speakers representing nearby, minimap-hidden, and range-edge voices. The simulator never joins/signals a room and uses generated tones, not the microphone.
+- Reuse the production Web Audio high-pass/low-pass cutoffs (75/18000 Hz clear; 190/1650 Hz muffled), smooth filter transitions, HRTF panning, and the Rift Voices 1350â€“1900u range/falloff for the edge speaker.
+- Add controls to compare muffling on/off, stereo/mono, moving HRTF sources, and the edge speaker's loudness/range. Stopping Debug mode stops the simulator and closes its audio context.
+
+VERIFICATION FOR v0.7.1
+- `npm run build:prod` passed; webpack reports its existing model/bundle size warnings.
+- `npx tauri build --no-bundle` passed and generated the Windows x64 executable at `Finished Builds/v0.7.1/lolproxchat.exe`.
+- SHA-256 is recorded in `Finished Builds/v0.7.1/BUILD.txt`. The binary is unsigned; SmartScreen may still warn.
+- No automated test suites were run.
+
+IMPLEMENTED IN v0.7.3 (current working changes)
+- Replace the three-tone lab with one silent-until-click, map-placed local speaker; improve microphone recording/replay and restore the app's prior MIC state after capture.
+- Nearby Voices keeps its 1350-unit cap. Rift Voices uses 2600 units normally, grows smoothly to a 3000-unit shouting radius, and fades reverb in beyond shouting range through 3900 units.
+- Reverb is now a stereo convolution room impulse (up to a two-second diffuse tail), rather than distinct repeated echoes. Distance smoothly adjusts the wet mix. When a peer connection ends abruptly, keep the audio graph alive briefly to let that reverb ring out.
+- The same filter/reverb chain is wired for browser playback and app/OBS audio. Rift mode range behavior is documented in the user guide, README, and compliance notes.
+- User clarification: long-distance voice effect should sound mostly like reverb; abrupt voice cutoffs (such as a player dying/leaving) should ring out instead of being faded away.
+
+VERIFICATION FOR v0.7.3
+- `npm run build:prod` passed. Webpack emitted its existing asset-size/performance warnings for the ONNX/WASM assets.
+- `npm run build` in `server/` passed.
+- `npx tauri build --no-bundle` passed and produced the Windows x64 executable at `Finished Builds/v0.7.3/lolproxchat.exe`.
+- SHA-256 is recorded in `Finished Builds/v0.7.3/BUILD.txt`. The executable is unsigned; SmartScreen may still warn.
+- No automated test suites were run.
+
+v0.7.4 FIX
+- Debug sound was silent because the local test graph stopped at the high-pass filter: high-pass had no connection to low-pass/HRTF/output. Reconnected the voice source through high-pass â†’ low-pass â†’ HRTF â†’ dry/reverb mix â†’ audio output.
+- v0.7.4 is a small fix release; v0.7.3 stays preserved in Finished Builds.
+- Verification: `npm run build:prod` and `npx tauri build --no-bundle` passed. Webpack reports its existing asset-size warnings. Executable/hash are in `Finished Builds/v0.7.4/BUILD.txt`; automated test suites were not run.
+
+IMPLEMENTED IN v0.7.2
+- Make the Debug Voice Lab minimap clickable. Clicks become a simulated voice source at the corresponding supported-map world coordinates; distance, muffling, range, and smooth HRTF stereo use the selected champion/camera listener.
+- Add an optional 10-second microphone recording to replay from a clicked location through the local voice processing graph. Recording requires the app MIC mute state, asks for microphone permission, stops capture after recording, and keeps the clip in memory only. Clearing the clip restores the synthetic default test voice.
+- Add explicit hidden-speaker simulation control and explain local-only behavior in the debug panel.
+- Add troubleshooting for Windows Communications audio ducking. Code review confirms League audio is not captured or passed through the app's peer voice effects.
+
+AUDIO RESEARCH
+- Microsoft documents default Windows communications ducking: depending on the Communications setting, Windows may attenuate or mute non-communications audio when a communications stream opens. This is a plausible explanation if League gets quieter while voice capture is active; it is not proof of the exact cause on this PC.
+- Compare with Windows Sound > More sound settings > Communications > Do nothing. The app transforms incoming chat streams only; it does not capture or process League output.
+- References: https://learn.microsoft.com/en-us/windows/win32/coreaudio/stream-attenuation and https://learn.microsoft.com/en-us/windows/win32/coreaudio/using-the-communication-device
+
+VERIFICATION FOR v0.7.2
+- `npm run build:prod` passed; webpack reports its existing model/bundle size warnings.
+- `npx tauri build --no-bundle` passed; Windows x64 artifact is `Finished Builds/v0.7.2/lolproxchat.exe`.
+- SHA-256 is recorded in `Finished Builds/v0.7.2/BUILD.txt`. The executable is unsigned; SmartScreen may still warn.
+- No automated test suites were run.
+
+IMPLEMENTED IN v0.7.5
+- Debug Voice Lab keeps a clicked sample fixed at the selected map location while recomputing listener distance, level, filters, reverb, and smooth HRTF direction whenever the tracked champion/camera position updates. Repositioning no longer requires another map click.
+- Microphone test clips use measured RMS loudness to determine the local simulated voice level. The shout threshold is 0.55; shouting extends the radius only to 2500u and reverb begins beyond that shout radius.
+- Reduced proximity ranges by about 11%: Nearby Voices full-volume radius 800u and cutoff 1200u; Rift Voices normal radius 2300u, shouting cap 2500u, reverb cutoff 3500u. Muffled-distance threshold is now 900u.
+- Clarification: “updates live” means the exact same placed sample changes as the listener moves, without clicking the map again.
+
+VERIFICATION FOR v0.7.5
+- `npm run build:prod` passed (existing webpack asset-size warnings).
+- `npm run build` in `server/` passed after correcting the full-volume constant placement.
+- `npx tauri build --no-bundle` passed and produced `Finished Builds/v0.7.5/lolproxchat.exe` (Windows x64). SHA-256 is recorded in `BUILD.txt` in that folder. The executable is unsigned; SmartScreen may still warn. No automated test suites were run.
+
+IMPLEMENTED IN v0.7.6
+- Rift range now scales with measured voice loudness: quiet speech starts at 1250u and smoothly reaches 2300u; louder voices extend incrementally, with maximum loudness reaching 3600u. Strong shout radius grows slightly to a 2600u cap.
+- Voice muffling is a continuous low-pass/high-pass effect in browser and app audio, increasing smoothly with distance. An unseen enemy begins receiving distance muffling at 250u (visible voices begin at 650u) and gets an additional muffling amount; filter automation smooths changes as visibility/distance changes.
+- The local Voice Lab uses the same quiet range scaling and hidden/distant muffling behavior.
+
+VERIFICATION FOR v0.7.6
+- `npm run build:prod` passed with the existing webpack large-asset warnings.
+- `npm run build` in `server/` passed.
+- `npx tauri build --no-bundle` passed and produced `Finished Builds/v0.7.6/lolproxchat.exe` (Windows x64). SHA-256 is recorded in `BUILD.txt` in that folder. The executable is unsigned; SmartScreen may still warn. No automated test suites were run.
+
+IMPLEMENTED IN v0.7.7
+- Proximity volume now starts attenuating at 200u (Nearby full-volume plateau) or a proportional short plateau in Rift Voices, instead of holding full volume across a broad near-field radius.
+- Replaced the late-onset quadratic fade with a stronger smooth fade across the remaining range. The local Voice Lab follows the same gain curve so its distance playback represents the actual proximity levels.
+
+VERIFICATION FOR v0.7.7
+- `npm run build:prod` and `npm run build` in `server/` passed. `npx tauri build --no-bundle` passed and produced `Finished Builds/v0.7.7/lolproxchat.exe`; SHA-256 is in `BUILD.txt` in that folder. The executable is unsigned; SmartScreen may still warn. No automated test suites were run.
+
+IMPLEMENTED IN v0.7.8
+- Add an optional Rift-only “Rift stereo follows camera” setting. Stereo direction is calculated from the minimap camera center, while the server is explicitly asked to score hearing distance and volume from the champion. Existing published camera state remains available to other clients.
+- Camera tracking is enabled while this option is active, even if the separate Voice on camera sharing setting is off. Private host-forced Rift mode also exposes the option.
+- The local Voice Lab now separates its volume-distance listener from its stereo-direction listener and updates both live.
+
+VERIFICATION FOR v0.7.8
+- `npm run build:prod` and `npm run build` in `server/` passed. `npx tauri build --no-bundle` passed and produced `Finished Builds/v0.7.8/lolproxchat.exe`; SHA-256 is in `BUILD.txt` in that folder. The executable is unsigned; SmartScreen may still warn. No automated test suites were run.
+
+IMPLEMENTED IN v0.7.9
+- Expose a Rift-only camera-relative stereo toggle, default off. When on, relative HRTF direction uses the minimap camera center; hearing-volume scoring and distance effects remain relative to the champion. A dedicated request flag tells the server to ignore the listener camera for Rift volume scoring while preserving camera publication to peers.
+- The toggle also enables camera tracking when needed, is disabled if stereo is off/host-forced mono, and appears when a private host forces Rift.
+- Updated Debug Voice Lab placement and live movement so it can model camera direction separately from champion distance.
+
+VERIFICATION FOR v0.7.9
+- `npm run build:prod` and `npm run build` in `server/` passed. `npx tauri build --no-bundle` passed and produced `Finished Builds/v0.7.9/lolproxchat.exe`; SHA-256 is in `BUILD.txt` in that folder. The executable is unsigned; SmartScreen may still warn. No automated test suites were run.
+
+IMPLEMENTATION IN PROGRESS (v0.8.0)
+- Added a host-only Chaos Mode toggle, live private-room relay validation, configurable event interval and duration scaling, and a separate click-through in-game HUD. Chaos can be switched on/off during a match; server volume changes are tied to a validated active private-room effect.
+- Current chaos catalog has 17 voice/spatial effects, including filters, reverb, mono/panning changes, brief silence, volume changes, and Riftwide Broadcast range/reverb. It avoids repeating the last three events and caps concurrent effects at three.
+- Added audio device-change recovery, ended-microphone-track recovery, and adaptive tracking cadence that adjusts the live timer without resetting player lock state.
+- Added a post-game recap window. It reads League's local LCU end-of-game stats block for the full participant scoreboard, and separately shows app-local voice time, voice bursts, loudness, and distinct voices heard. Voice samples are not recorded or sent to the server.
+- Research: GTA V ZChaos inspired configurable trigger pacing, effect lists, and reduced repeats (https://zolika.dev/mods/vchaos; https://zolika1351.pages.dev/chaos/gtav). Minecraft Happenings inspired no-repeat tracking and a three-event active HUD (https://www.curseforge.com/minecraft/mc-mods/happenings). League local end-of-game stats endpoint is documented in community LCU API docs (https://lcu.kebs.dev/); Riot documents its separate live-game data API at https://developer.riotgames.com/docs/lol#game-client-api_live-client-data-api.
+- Packaging complete: UI event wiring and build review are complete; the v0.8.0 release executable and BUILD.txt are in Finished Builds/v0.8.0. No automated test suites were run.
+- Clarification incorporated: the recap includes actual end-game League LCU participant stats (the client API scoreboard), plus separate proximity-chat measurements derived locally by this client. Those local measures are not standard League scoreboard stats and include local mic audible time, voice bursts, peak callout level, distinct peers heard, and time each peer was audible. The scoreboard remains a conventional League-style K/D/A, damage, gold, farm, vision, items table for match context.
+- Added a match-time adaptive-tracking toggle (on by default), true playback-rate changes for the high/low pitch Chaos events, safe async removal of chaos events, host-off relay cleanup, and dynamic current Data Dragon asset version lookup for recap icons.
+- The recap’s scoreboard combines local LCU post-game stats with a separate chat-stats tab; it does not claim chat observations represent the whole party. Data Dragon version lookup keeps champion/item assets current, falling back to text initials if unavailable.
+
+FINAL VERIFICATION FOR v0.8.0
+- `npm run build:prod`, `npm run build` in `server/`, and `npx tauri build --no-bundle` completed successfully. `git diff --check` found no whitespace errors; Git only reported expected LF-to-CRLF conversion notices.
+- Release executable SHA-256: `4EA561AE8271AFD846F3CD74E49E5A9E38F00A1FD2EF0B304E4E595EB3D8ACB7`. The packaged executable hash matches `src-tauri/target/release/lolproxchat.exe`.
+- The Windows executable remains unsigned, so SmartScreen may still show its publisher/reputation warning. Removing that warning requires signing with a trusted code-signing certificate.
+- The local server source builds, but no remote server deployment was performed. Chaos host enforcement and Riftwide Broadcast server-side range changes require deploying the matching server build before those shared-room behaviors are available against the hosted service.
+- No automated tests were run. Post-game data availability depends on League's local client exposing the end-of-game stats block; the recap reports unavailable data if the endpoint does not return it.
+IMPLEMENTED IN v0.8.1
+- Automatic post-match recap is off by default and can be enabled in Settings > After the match. The preference is stored locally on this PC.
+- Match voice and Chaos observations continue throughout a match; if recap is enabled at match end, the local report includes the full match.
+- Production frontend build and Windows release build passed. No automated tests were run.
+- Packaged executable SHA-256: 62947925D174FAB225FF5889A78274DA2B14365B0C8C98F8BDF672775AAE41F1 (see Finished Builds/v0.8.1/BUILD.txt).
+
+
+IMPLEMENTED IN v0.8.2
+- Improved private-room state sync: send room snapshots across app windows, use monotonic revisions, and reset revision tracking when the server process changes. Host settings can be set before joining a private room and are published by its host on join.
+- Grouped dead-player voice behavior into Ghost chat (dead-to-dead only), Ghosts + nearby living (dead players hear around their camera and may speak around their last body position), and No dead chat. Private-room hosts can enforce one room-wide choice. Dead voices use subtle reverb; dead players are muted locally when the enforced mode is off.
+- Made distant volume fades and audio-filter transitions smoother, increased hidden-player and distance muffling, and surfaced room connection and latency status in Settings.
+- Production, server, and Windows release builds passed. No automated tests run.
+
+FINAL VERIFICATION FOR v0.8.2
+- `npm run build:prod`, `npm run build` in `server/`, and `npx tauri build --no-bundle` passed. No automated tests were run.
+- Packaged executable SHA-256: 26F68FD372060124F74FD9ADF904C753C181ABB03C43C853A60558A6D27CDA4E (Finished Builds/v0.8.2/BUILD.txt).
+- The Windows executable is unsigned, so SmartScreen may still show its reputation warning. Host-enforced settings and coordinated dead-player routing need the matching server code deployed to the configured voice server.
+
+IMPLEMENTED IN v0.9.0
+- Confirmed the exe uses the configured hosted service by default (https://proxchat.dant123.com). The health endpoint and TURN credential endpoint responded. A temporary WebSocket room probe connected, but its room_state omitted protocolVersion and serverEpoch, confirming the hosted server is an older build. Core voice room use remains on the original endpoint; host-enforced room options and server-side dead-voice rules need the matching server code deployed. No remote deployment access/configuration was present, and no server was deployed.
+- Added room-wide replay consent through the existing room-presence message. Capture starts only when each connected Yordle Yapper client opts in; it stops when consent is withdrawn or an unconsenting client joins. Every consenting client locally captures incoming voices plus its own outgoing microphone and minimap-observed positions; replay audio/files are not uploaded.
+- Added the shareable .yyr format: 20 kbps Opus/WebM voice tracks, position/loudness samples, match-clock timestamps, and an embedded manifest. Export streams in bounded chunks to Downloads/Yordle Yapper Replays. Replay playback follows League's local Replay API clock, camera position, and camera rotation, with loudness-scaled range, smooth filtering, stereo HRTF, and delayed reverb. Position capture relies on each local minimap tracker; missed icons have no reliable replay location.
+- Riot Replay API research: it is disabled by default and must be enabled with EnableReplayApi=1 under [General] in game.cfg. The local API supplies playback state and render/camera state. Official docs: https://developer.riotgames.com/docs/lol#game-client-api_replay-api ; Riot's League Director reference: https://github.com/RiotGames/leaguedirector.
+- Bumped the Windows app to v0.9.0. Production frontend and Windows release builds passed. No automated tests were run.
+- Packaged the one-file v0.9.0 release in Finished Builds/v0.9.0; hash is in BUILD.txt. The 29.5 MB executable embeds the app assets. Windows WebView2 Runtime is still a system prerequisite. The binary remains unsigned; SmartScreen may warn.
+- Online compatibility follow-up: a temporary two-client WSS room probe confirmed the hosted service relays the new replayConsent presence field unchanged. The room snapshot still lacks protocolVersion/serverEpoch, so old server-only features remain unavailable until deployment.
+- Self-hosting/legacy compatibility follow-up: added a saved runtime server URL in Settings, so clients can select a host-run instance without rebuilding. Uses the existing server routes and WebSocket protocol; no server changes/deployment needed for clients to select it. The host still runs the included Node/Docker signaling service separately and must share a reachable address (private LAN/VPN recommended; public use needs TLS/TURN).
+- For older signaling deployments, private host settings and chaos events are now embedded in the existing position presence relay; replay consent remains on that relay. Clients apply host control only when the transport sender matches the room host. This preserves automatic match-room behavior.
+- Important capability boundary: old server deployments still run their own volume computation. Client-side modes/filtering/replay/spatial audio remain local; new server-only range/volume algorithms still require the matching server source. The app does not itself launch or bundle a server process.
+- v0.9.1 release: runtime custom voice-server setting, legacy position-message fallback for host options and chaos, sender/host validation, and HTTP-private-network-only validation. `npm run build:prod` and `npx tauri build --no-bundle` passed; no automated tests run. Finished Builds/v0.9.1/YordleYapper.exe SHA-256: FD0D0624F8AE539E6995E5A9BB179ED2DB0B79515A03F34CDF8D7BE18ECFE2E8 (29,510,144 bytes).
+- Self-host operation boundary: the exe selects/connects to an address but does not launch the Node server. The host must run `server/` separately and expose it to others over a trusted private network/VPN or HTTPS. Old deployed server compatibility covers existing signaling/presence features; server-side proximity algorithms cannot be upgraded remotely, so use this repo's current server for those.
+
+IMPLEMENTED IN v0.9.2
+- Added automatic Windows friend-group hosting: the host app starts the current bundled signaling server and the official ngrok CLI, obtains the generated HTTPS URL, and selects it for the host. Players on the old default service remain unaffected unless they choose the host's URL. The host must install/authenticate official ngrok once; the app does not handle or store the ngrok token. Ngrok end-to-end could not be verified on this machine because its PATH `ngrok.exe` is a pyngrok wrapper that failed while trying to download the actual CLI.
+- Kept default-server compatibility. A live isolated legacy-room probe confirmed the old server relays presence payloads but omits host metadata. Current clients now infer private-room host from preserved join ordering and relay host options/Chaos through the legacy presence message, validating the transport sender. New server-computed range/dead-player routing behavior still requires the current server helper; recap, replay, spatial audio, and local filters remain client-side.
+- Added Windows native edge resizing for the overlay and removed automatic height changes that counteracted user resize.
+- Windows release and server companion are in Finished Builds/v0.9.2; BUILD.txt records size and SHA-256. Production frontend, bundled server, and Tauri release builds passed. The standalone server passed a local health check. No automated tests or multi-PC League playtest were run.
+- v0.9.2 self-host security/availability limitation: the ngrok URL is public while active and acts as an invite secret. Default TURN credentials can still be requested from the existing service if needed; room signaling, room names, positions, and server volume calculations use the selected host endpoint.
