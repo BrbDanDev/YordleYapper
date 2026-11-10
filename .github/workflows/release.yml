@@ -80,6 +80,9 @@ jobs:
         with:
           node-version: 25.5.0
 
+      - name: Install server dependencies
+        run: npm --prefix server ci
+
       - name: Build standalone server companion
         run: npm --prefix server run build:standalone
 
