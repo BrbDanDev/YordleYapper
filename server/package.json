@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "build:standalone": "node ../node_modules/webpack-cli/bin/cli.js --config webpack.host.config.cjs && node --build-sea sea-config.json",
+    "build:standalone": "node ../node_modules/webpack-cli/bin/cli.js --config webpack.host.config.cjs && node build-standalone.cjs",
     "start": "node dist/index.js",
     "test": "vitest"
   },
