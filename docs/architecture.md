@@ -180,7 +180,7 @@ In-app updater (`src-tauri/src/updater.rs` + `src/services/updater.ts`):
 
 1. On launch, if the user has Auto-update on (localStorage flag), wait ~5 seconds for the orchestrator to settle.
 2. `GET https://api.github.com/repos/BrbDanDev/YordleYapper/releases/latest`, compare `tag_name` against `CARGO_PKG_VERSION`.
-3. If newer: prefer the `lolproxchat.exe` asset's `browser_download_url`, fall back to any `.exe`. Stream-download to `<current-exe-dir>/<current-exe-name>.new`.
+3. If newer: prefer the `YordleYapper.exe` asset's `browser_download_url`, fall back to legacy `lolproxchat.exe` or any `.exe`. Stream-download to `<current-exe-dir>/<current-exe-name>.new`.
 4. Spawn the new binary with `--complete-update <old-path>` and exit.
 5. The new process waits ~800 ms (so the old process releases its file lock), deletes the old `.exe` with up to 5 retries, then renames `.new` → `.exe` (renaming a running `.exe` is allowed on Windows; deleting one isn't).
 

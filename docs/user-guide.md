@@ -5,7 +5,7 @@ Everything you need to use LoLProxChat day-to-day. For installation, see the [RE
 ## First-time setup
 
 1. **Set League of Legends to Borderless mode** (Settings → Video → Window Mode → Borderless). This is non-negotiable — DX9 true fullscreen takes exclusive GPU output and no overlay (including this one) can render over it. Borderless is functionally identical performance-wise.
-2. Launch `lolproxchat.exe`. The panel appears in the middle of the screen showing the current lifecycle status: "Waiting for League of Legends", "In champion select", "Joining game…", etc.
+2. Launch `YordleYapper.exe`. The panel appears in the middle of the screen showing the current lifecycle status: "Waiting for League of Legends", "In champion select", "Joining game…", etc.
 3. Once you load into a match the panel jumps to the left edge of the minimap. You can drag it anywhere by grabbing the title bar.
 4. Other players running LoLProxChat in the same match appear in the player list within a few seconds.
 
@@ -108,7 +108,7 @@ If **Auto-update** is on (Settings), the app downloads and applies new releases 
 
 You can also force a check at any time via **Settings → Updates → CHECK**. If an update is available it downloads and applies immediately; if not you get an "Up to date" message.
 
-For manual updates: download the new `lolproxchat.exe` from [Releases](https://github.com/BrbDanDev/YordleYapper/releases/latest) and replace your existing copy.
+For manual updates: download the new `YordleYapper.exe` from [Releases](https://github.com/BrbDanDev/YordleYapper/releases/latest) and replace your existing copy. The release also includes `lolproxchat.exe` for compatibility with older in-app updaters.
 
 ### Verifying downloads
 
@@ -116,13 +116,13 @@ Every release body includes a SHA-256 hash of the exe. Compare against your down
 
 ```bash
 # Windows PowerShell
-Get-FileHash lolproxchat.exe
+Get-FileHash YordleYapper.exe
 
 # WSL / git-bash
-sha256sum lolproxchat.exe
+sha256sum YordleYapper.exe
 
 # Linux/macOS
-shasum -a 256 lolproxchat.exe
+shasum -a 256 YordleYapper.exe
 ```
 
 The hash defends against in-transit tampering, mirror reposts, and typosquatted re-uploads. It does *not* defend against you having downloaded from the wrong URL — always start from <https://github.com/BrbDanDev/YordleYapper/releases>.
@@ -145,7 +145,7 @@ The refreshed panel groups settings by purpose. **On-screen voices** is the form
 
 **Match voice room** is automatic when the code field is blank. To make a private room, generate a code and share it only with the players you want to join. Every participant must use the same code and be in the same League match; the code is combined with that match's roster, so it does not create an out-of-game party lobby. It is saved on this PC and applies when the next match room is created. The code becomes part of the room identifier sent to the signaling server over TLS, so the server operator can see it; it is not an account credential or a guarantee against a server operator. Clear the field to return to automatic rooms. Treat the code like an invite secret and do not reuse a password.
 
-The app is branded **Yordle Yapper**; Windows may still list the executable as `lolproxchat.exe` for updater compatibility. Releases are unsigned, so SmartScreen warnings cannot be eliminated by a UI or metadata change. A trusted code-signing identity and a signed release process are needed to establish publisher reputation.
+The app is distributed as `YordleYapper.exe`; older releases may still use `lolproxchat.exe`. Releases are unsigned, so SmartScreen warnings cannot be eliminated by a UI or metadata change. A trusted code-signing identity and a signed release process are needed to establish publisher reputation.
 
 ### Voice replays
 

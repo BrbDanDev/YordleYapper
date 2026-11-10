@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ## [Unreleased]
 
+- Use `YordleYapper.exe` as the branded Windows download name while retaining the `lolproxchat.exe` compatibility asset for existing updaters.
+
 ## [v0.9.2] — 2026-11-10
 
 ### Added

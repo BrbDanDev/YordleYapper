@@ -16,7 +16,7 @@ Standalone Windows desktop app built with Tauri 2 + WebView2. No Overwolf, no th
 
 ## Install
 
-Download `lolproxchat.exe` from [your latest release](https://github.com/BrbDanDev/YordleYapper/releases/latest). It is portable and needs no installer. For self-hosting, also download `YordleYapperServer.exe` from the same release and keep both files together; only the host needs the server companion.
+Download `YordleYapper.exe` from [your latest release](https://github.com/BrbDanDev/YordleYapper/releases/latest). It is portable and needs no installer. For self-hosting, also download `YordleYapperServer.exe` from the same release and keep both files together; only the host needs the server companion. `lolproxchat.exe` remains as a compatibility download for older in-app updaters.
 
 The app connects to `proxchat.dant123.com` by default; everyone can use the same exe without running a server. To self-host, the host installs/authenticates ngrok once, then clicks **Host a server with ngrok → START HOSTING** in Settings. The host shares the generated HTTPS address and other players enter it in Voice server settings. This uses the current server companion, so the old default service does not need updating. The [legacy compatibility matrix](docs/legacy-server-compatibility.md) explains what works against the default. Voice audio travels peer-to-peer (or through TURN when required).
 
@@ -33,7 +33,7 @@ Launch the exe before or during a League match. The panel auto-attaches beside t
 Because the portable executable is unsigned, Windows may show a SmartScreen or Mark of the Web warning when you download it:
 
 - **"Windows protected your PC"** (SmartScreen) → **More info** → **Run anyway**.
-- **"This app has been blocked for your protection"** (Mark of the Web) → right-click `lolproxchat.exe` → **Properties** → check **Unblock** → **OK** → re-launch.
+- **"This app has been blocked for your protection"** (Mark of the Web) → right-click `YordleYapper.exe` → **Properties** → check **Unblock** → **OK** → re-launch.
 
 The release is unsigned, so SmartScreen may continue to warn on later downloads or on other PCs. This project cannot remove that warning in code: Windows reputation depends on a trusted signing identity and release signing. Only run a build you trust, and verify its SHA-256 hash.
 
@@ -43,10 +43,10 @@ Every release body includes a SHA-256 hash. Compare it against your downloaded e
 
 ```bash
 # PowerShell
-Get-FileHash lolproxchat.exe
+Get-FileHash YordleYapper.exe
 
 # WSL / git-bash
-sha256sum lolproxchat.exe
+sha256sum YordleYapper.exe
 ```
 
 Every release exe is also submitted to [VirusTotal](https://www.virustotal.com/) during the build, and the scan link is included in the release notes — verifiable against 70+ antivirus engines before you download.
@@ -56,7 +56,7 @@ Every release exe is also submitted to [VirusTotal](https://www.virustotal.com/)
 ## Quick start
 
 1. Make sure LoL is in **Borderless** mode.
-2. Launch `lolproxchat.exe`. The panel appears in the middle of the screen showing the current lifecycle ("Waiting for League of Legends", "In champion select", etc.).
+2. Launch `YordleYapper.exe`. The panel appears in the middle of the screen showing the current lifecycle ("Waiting for League of Legends", "In champion select", etc.).
 3. Once you load into a match, the panel jumps to the left edge of the minimap. Other players running LoLProxChat in the same match appear within a few seconds.
 4. **Always Open mic** is the default — just talk. **MIC** = self-mute, **VOL** = mute everyone, **MUTE** per row = silence a specific player.
 

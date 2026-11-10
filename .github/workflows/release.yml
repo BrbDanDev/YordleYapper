@@ -6,7 +6,8 @@ name: Build + draft release
 # third-party action), so the scan is reviewable in the draft before publish.
 # A human reviews and publishes the draft; publishing exposes the build to the
 # in-app updater (it reads releases/latest; drafts are invisible until published,
-# and the asset must be named exactly lolproxchat.exe).
+# and the branded asset is named exactly YordleYapper.exe. A legacy-named copy
+# remains available so older installed clients can still auto-update.
 #
 # Triggers (all GitHub-hosted, no secrets — PROXCHAT_SERVER defaults at build):
 #   - a version bump landing on main: Cargo.toml changes AND its version has no
@@ -158,7 +159,7 @@ jobs:
           $notes  = $body
           $notes += "`n`n---`n`n**SHA-256** (verify before running):`n`n"
           $notes += $fence + "`n" + $env:SHA256 + "`n" + $fence
-          $notes += "`n`nPowerShell:  Get-FileHash .\lolproxchat.exe -Algorithm SHA256`n"
+          $notes += "`n`nPowerShell:  Get-FileHash .\YordleYapper.exe -Algorithm SHA256`n"
           $notes += "`nSelf-hosting companion: **YordleYapperServer.exe** (download this beside the app only if you are hosting).`n"
           $notes += "`nServer companion SHA-256: $($env:SERVER_SHA256)`n"
           if ($env:VT_URL) { $notes += "`n**VirusTotal scan:** $($env:VT_URL)`n" }
@@ -173,13 +174,14 @@ jobs:
           EXE: ${{ steps.artifact.outputs.exe_path }}
           SERVER_EXE: ${{ steps.artifact.outputs.server_path }}
         run: |
-          $asset = "$($env:EXE)#lolproxchat.exe"
+          $asset = "$($env:EXE)#YordleYapper.exe"
+          $legacyAsset = "$($env:EXE)#lolproxchat.exe"
           $serverAsset = "$($env:SERVER_EXE)#YordleYapperServer.exe"
           gh release view $env:TAG 2>$null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:TAG $asset $serverAsset --clobber
+            gh release upload $env:TAG $asset $legacyAsset $serverAsset --clobber
             gh release edit   $env:TAG --notes-file RELEASE_NOTES.md
           } else {
-            gh release create $env:TAG $asset $serverAsset --draft --title $env:TAG --notes-file RELEASE_NOTES.md --target $env:GITHUB_SHA
+            gh release create $env:TAG $asset $legacyAsset $serverAsset --draft --title $env:TAG --notes-file RELEASE_NOTES.md --target $env:GITHUB_SHA
           }
           Write-Host "Draft release ready for $($env:TAG) — review and publish it in the Releases tab."

@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Only the latest release receives security updates. Older versions can be upgraded by enabling auto-update in Settings, or by downloading the newest `lolproxchat.exe` from [Releases](https://github.com/BrbDanDev/YordleYapper/releases/latest).
+Only the latest release receives security updates. Older versions can be upgraded by enabling auto-update in Settings, or by downloading the newest `YordleYapper.exe` from [Releases](https://github.com/BrbDanDev/YordleYapper/releases/latest).
 
 ## Reporting a Vulnerability
 
