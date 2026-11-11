@@ -60,7 +60,11 @@ let saved: Record<string, unknown>;
 
 beforeAll(() => {
   saved = { Audio: g.Audio, MediaStream: g.MediaStream, RTCPeerConnection: g.RTCPeerConnection, window: g.window, document: g.document };
-  g.window = { setInterval: (f: () => void, ms: number) => setInterval(f, ms) };
+  g.window = {
+    setInterval: (f: () => void, ms: number) => setInterval(f, ms),
+    setTimeout: (f: () => void, ms: number) => setTimeout(f, ms),
+    clearTimeout: (id: number) => clearTimeout(id),
+  };
   g.document = { addEventListener: () => undefined, removeEventListener: () => undefined };
   g.Audio = FakeAudio;
   g.MediaStream = FakeStream;

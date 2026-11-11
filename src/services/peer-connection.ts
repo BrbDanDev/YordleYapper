@@ -24,7 +24,7 @@ import { tuneOpusSdp } from './webrtc-opus';
 // stays small, which is what keeps the gain change click-free without WebAudio
 // ramping.
 const RISE_TAU_SEC = 0.30;
-const FALL_TAU_SEC = 0.2;
+const FALL_TAU_SEC = 0.12;
 
 // Ceilings on a single step, whatever the elapsed time says. The exponential
 // alone tends to 1 as dt grows, so one long gap — a throttled timer, a paused
@@ -326,7 +326,7 @@ export class PeerConnection {
       // full voice gain before the dry/wet split made distant reverb vanish
       // exactly when it should become more apparent.
       if (this.reverbTailTimer === null) {
-        this.reverbGain?.gain.setTargetAtTime(Math.pow(v, 0.8), now, 0.08);
+        this.reverbGain?.gain.setTargetAtTime(Math.sqrt(v) * this.voiceReverbMix, now, 0.08);
       }
     } else if (this.effectsGraphFailed) {
       this.audioElement.volume = v;
@@ -353,7 +353,7 @@ export class PeerConnection {
       panner.maxDistance = 3;
       panner.rolloffFactor = 0.65;
       const dry = ctx.createGain();
-      const reverbSend = ctx.createGain(); reverbSend.gain.value = 0;
+      const reverbSend = ctx.createGain(); reverbSend.gain.value = 1;
       const reverb = ctx.createConvolver(); reverb.buffer = makeRoomImpulse(ctx);
       const reverbGain = ctx.createGain(); reverbGain.gain.value = 0;
       const mix = ctx.createGain();
@@ -412,15 +412,16 @@ export class PeerConnection {
       this.panner.positionY.setTargetAtTime(0, now, 0.12);
       this.panner.positionZ.setTargetAtTime(options.spatial ? panZ : -0.1, now, 0.12);
       const mix = Math.max(0, Math.min(0.8, options.echoMix ?? 0));
-      const requestedReverbMix = mix * 0.68;
+      const requestedReverbMix = mix * 0.9;
       if (requestedReverbMix < this.voiceReverbMix) {
         this.pendingReverbMix = requestedReverbMix;
         if (this.reverbHoldTimer === null) {
           this.reverbHoldTimer = window.setTimeout(() => {
             this.reverbHoldTimer = null;
             this.voiceReverbMix = this.pendingReverbMix;
-            if (this.effectContext && this.reverbSend) {
-              this.reverbSend.gain.setTargetAtTime(this.voiceReverbMix, this.effectContext.currentTime, 0.6);
+            if (this.effectContext && this.reverbGain) {
+              const volume = this.smoothedVolume ?? this.targetVolume;
+              this.reverbGain.gain.setTargetAtTime(Math.sqrt(volume) * this.voiceReverbMix, this.effectContext.currentTime, 0.6);
             }
           }, 450);
         }
@@ -428,11 +429,10 @@ export class PeerConnection {
         if (this.reverbHoldTimer !== null) window.clearTimeout(this.reverbHoldTimer);
         this.reverbHoldTimer = null;
         this.voiceReverbMix = requestedReverbMix;
-        this.reverbSend?.gain.setTargetAtTime(this.voiceReverbMix, now, 0.24);
       }
       const volume = this.smoothedVolume ?? this.targetVolume;
       this.dryGain?.gain.setTargetAtTime(volume * (1 - this.voiceReverbMix * 0.2), now, 0.32);
-      if (this.reverbTailTimer === null) this.reverbGain?.gain.setTargetAtTime(Math.pow(volume, 0.8), now, 0.32);
+      if (this.reverbTailTimer === null) this.reverbGain?.gain.setTargetAtTime(Math.sqrt(volume) * this.voiceReverbMix, now, 0.32);
     }
     this.appTap?.setVoiceEffects({ muffling: options.muffling, panX, panZ, spatial: options.spatial, echoMix: options.echoMix, echoDelay: options.echoDelay, chaosHighpass: options.chaosHighpass, chaosBandpass: options.chaosBandpass });
   }
@@ -587,13 +587,13 @@ export class PeerConnection {
     if (!hasReverbTail) return;
     const now = this.effectContext?.currentTime;
     if (now === undefined || !this.reverbGain) return;
-    this.reverbGain.gain.setTargetAtTime(Math.max(Math.pow(this.smoothedVolume ?? this.targetVolume, 0.8), 0.2), now, 0.025);
+    this.reverbGain.gain.setTargetAtTime(Math.max(this.voiceReverbMix, 0.28), now, 0.025);
     if (this.reverbTailTimer !== null) window.clearTimeout(this.reverbTailTimer);
     this.reverbTailTimer = window.setTimeout(() => {
       this.reverbTailTimer = null;
       if (this.effectContext && this.reverbGain) {
         const volume = this.smoothedVolume ?? this.targetVolume;
-        this.reverbGain.gain.setTargetAtTime(Math.pow(volume, 0.8), this.effectContext.currentTime, 0.12);
+        this.reverbGain.gain.setTargetAtTime(Math.sqrt(volume) * this.voiceReverbMix, this.effectContext.currentTime, 0.12);
       }
     }, 2200);
   }

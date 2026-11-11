@@ -15,7 +15,7 @@ import { disownAfterSec } from './tracking-helpers';
 import { BlobScorer, ChampionClassifier } from './champion-classifier';
 import { PlayerChampion, SkinAwareScorer, TeammateSkin, TemplateSet, loadBaseTemplates, loadTeamTemplates } from './skin-matcher';
 import { CameraHearing } from './camera-hearing';
-import { riftReverbMix, riftVoiceVolume } from './rift-voice';
+import { riftShoutReverbMix, riftVoiceVolume } from './rift-voice';
 import { getRiftVoices, getRiftStereoFromCamera, getMatchRecapEnabled, getDeadVoiceMode } from './audio-prefs';
 import { getSpatialAudio, getVoiceMuffling } from './audio-prefs';
 import type { RoomHostOptions, RoomState, ListeningMode } from '../core/room-policy';
@@ -1917,8 +1917,10 @@ export class Orchestrator {
       const distanceMuffling = Math.max(0, Math.min(1, (effectiveDistance - (hiddenEnemy ? 180 : 450)) / (hiddenEnemy ? 1120 : 1380))) * 0.84;
       const hiddenMuffling = hiddenEnemy ? 0.64 : 0;
       const mufflingAmount = Math.min(1, distanceMuffling + hiddenMuffling);
-      const voiceLevel = this.peerVoiceLevels.get(name) ?? 0;
-      const shoutReverb = mode === 'rift' ? riftReverbMix(effectiveDistance, voiceLevel) : 0;
+      // Read the received WebRTC stream directly; it is fresher and matches
+      // the level the listener actually hears better than relayed mic metadata.
+      const voiceLevel = this.audio.getPeerVoiceLevel(name);
+      const shoutReverb = mode === 'rift' ? riftShoutReverbMix(effectiveDistance, voiceLevel) : 0;
       const chaosReverb = this.chaosActive.has('longrange') && effectiveDistance > 1000
         ? Math.min(0.42, 0.08 + (effectiveDistance - 1000) / 10000) : 0;
       const deadReverb = state.isDead ? 0.1 : 0;

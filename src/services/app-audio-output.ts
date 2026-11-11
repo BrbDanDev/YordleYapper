@@ -169,13 +169,13 @@ export class AppAudioOutput {
           if (reverbTail && tap.echoMix > 0.005) {
             const tailUntil = performance.now() + 2200;
             tap.reverbTailUntil = tailUntil;
-            tap.nodes.wet.gain.setTargetAtTime(Math.max(Math.pow(Math.max(0, value), 0.8), 0.2), now, 0.02);
+            tap.nodes.wet.gain.setTargetAtTime(Math.max(tap.echoMix * 0.9, 0.28), now, 0.02);
             if (tap.reverbTailTimer !== null) window.clearTimeout(tap.reverbTailTimer);
             tap.reverbTailTimer = window.setTimeout(() => {
               tap.reverbTailTimer = null;
               if (tap.reverbTailUntil !== tailUntil) return;
               tap.reverbTailUntil = 0;
-              if (tap.nodes && this.ctx) tap.nodes.wet.gain.setTargetAtTime(Math.pow(Math.max(0, tap.gain), 0.8), this.ctx.currentTime, 0.12);
+              if (tap.nodes && this.ctx) tap.nodes.wet.gain.setTargetAtTime(Math.sqrt(Math.max(0, tap.gain)) * tap.echoMix * 0.9, this.ctx.currentTime, 0.12);
             }, 2200);
           } else if (performance.now() >= tap.reverbTailUntil) {
             tap.reverbTailUntil = 0;
@@ -247,10 +247,10 @@ export class AppAudioOutput {
     const pan = this.ctx.createPanner(); pan.panningModel = 'HRTF'; pan.distanceModel = 'inverse'; pan.refDistance = 1; pan.maxDistance = 3; pan.rolloffFactor = 0.65;
     const g = this.ctx.createGain();
     const wet = this.ctx.createGain();
-    const send = this.ctx.createGain(); send.gain.value = 0;
+    const send = this.ctx.createGain(); send.gain.value = 1;
     const reverb = this.ctx.createConvolver(); reverb.buffer = makeRoomImpulse(this.ctx);
     const mix = this.ctx.createGain();
-    g.gain.value = tap.gain * (1 - tap.echoMix * 0.14); wet.gain.value = Math.pow(Math.max(0, tap.gain), 0.8);
+    g.gain.value = tap.gain * (1 - tap.echoMix * 0.18); wet.gain.value = Math.sqrt(Math.max(0, tap.gain)) * tap.echoMix * 0.9;
     src.connect(hi).connect(lo).connect(pan);
     pan.connect(g).connect(mix); pan.connect(send).connect(reverb).connect(wet).connect(mix);
     mix.connect(this.mixer);
@@ -266,9 +266,8 @@ export class AppAudioOutput {
     tap.nodes.pan.positionX.setTargetAtTime(tap.spatial ? Math.max(-1, Math.min(1, tap.panX)) : 0, now, 0.12);
     tap.nodes.pan.positionY.setTargetAtTime(0, now, 0.12);
     tap.nodes.pan.positionZ.setTargetAtTime(tap.spatial ? Math.max(-1, Math.min(1, tap.panZ)) : -0.1, now, 0.12);
-    tap.nodes.g.gain.setTargetAtTime(tap.gain * (1 - tap.echoMix * 0.14), now, 0.16);
-    tap.nodes.send.gain.setTargetAtTime(tap.echoMix * 0.68, now, 0.3);
-    if (performance.now() >= tap.reverbTailUntil) tap.nodes.wet.gain.setTargetAtTime(Math.pow(Math.max(0, tap.gain), 0.8), now, 0.2);
+    tap.nodes.g.gain.setTargetAtTime(tap.gain * (1 - tap.echoMix * 0.18), now, 0.16);
+    if (performance.now() >= tap.reverbTailUntil) tap.nodes.wet.gain.setTargetAtTime(Math.sqrt(Math.max(0, tap.gain)) * tap.echoMix * 0.9, now, 0.2);
   }
 
   /** (Re)builds the silent mixing graph at `sampleRate`, the device's. */

@@ -4,6 +4,11 @@ export const RIFT_QUIET_RANGE = 1250;
 export const RIFT_SHOUT_RANGE = 2600;
 export const RIFT_MAX_RANGE = 3600;
 export const RIFT_SHOUT_LEVEL = 0.55;
+const RIFT_REVERB_LEVEL_MIN = 0.12;
+const RIFT_REVERB_LEVEL_MAX = 0.36;
+const RIFT_REVERB_SHOUT_MIN = 2300;
+const RIFT_REVERB_SHOUT_MAX = 2600;
+const RIFT_REVERB_CUTOFF = 3600;
 const FULL_VOLUME_RANGE = 200;
 
 function clamp(value: number, min = 0, max = 1): number {
@@ -37,12 +42,11 @@ export function riftVoiceVolume(distance: number, level: number): number {
   return 1 - smoothstep(t);
 }
 
-/** Reverb is gated by both shout distance and loudness, then fades toward range cap. */
-export function riftReverbMix(distance: number, level: number): number {
-  const { range, shoutRange, loudness } = riftVoiceProfile(level);
-  if (loudness <= 0 || distance <= shoutRange || distance >= range || range <= shoutRange) return 0;
-  const progress = clamp((distance - shoutRange) / (range - shoutRange));
-  const fadeIn = smoothstep(progress / 0.18);
-  const fadeOut = 1 - smoothstep((progress - 0.2) / 0.8);
-  return 0.26 * loudness * fadeIn * fadeOut;
+/** Previously working receiver-level reverb curve, restored for live voices. */
+export function riftShoutReverbMix(distance: number, audioLevel: number): number {
+  const strength = clamp((audioLevel - RIFT_REVERB_LEVEL_MIN) / (RIFT_REVERB_LEVEL_MAX - RIFT_REVERB_LEVEL_MIN));
+  const shoutRange = RIFT_REVERB_SHOUT_MIN + strength * (RIFT_REVERB_SHOUT_MAX - RIFT_REVERB_SHOUT_MIN);
+  if (strength <= 0 || distance <= shoutRange || distance >= RIFT_REVERB_CUTOFF) return 0;
+  const beyondShout = clamp((distance - shoutRange) / (RIFT_REVERB_CUTOFF - shoutRange));
+  return strength * (0.06 + beyondShout * 0.48);
 }

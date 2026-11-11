@@ -234,3 +234,10 @@ IMPLEMENTED IN v0.9.9
 - Updated Opus SDP handling to find dynamic payload IDs, reduce per-peer max bitrate from 128 kbps to 48 kbps, enable in-band FEC, preserve DTX-off behavior to avoid clipped word onsets, and log jitter/loss/concealment metrics.
 - Compared the nearest available source to v0.9.0: this checkout has no v0.9.0 source tag, only the binary; v0.9.2 source shows a wet/dry mix tied directly to the effect amount, the v0.9.8 hold timer had been reset on every update, preventing its release.
 - Added focused tests for Rift curves and Opus SDP tuning. Full suite was attempted; unrelated existing browser-mock/test failures remain, and a real multi-machine match was not available to validate live network audio.
+
+IMPLEMENTED IN v0.9.10
+- Restored the known working receiver-level shout detector (WebRTC audio level 0.12 to 0.36) and distance-scaled reverb curve (shout radius 2300-2600 units, reverb cutoff 3600). This replaces the v0.9.9 dependence on relayed loudness for effect triggering.
+- Restored the square-root wet return tied to the effect mix in browser and App Audio; kept the release hold from restarting every update and kept dry voices dry on cutoff.
+- Tightened fall smoothing to meet the existing test target of under 0.5 seconds from audible to near-silent.
+- The v0.8.2 artifact exists locally but has no matching source commit/tag in this checkout; used the last available working source curve from v0.9.8 as reference.
+- Focused peer-volume / Rift / SDP tests, source/test type checks, and frontend build pass.
