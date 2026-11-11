@@ -175,7 +175,9 @@ jobs:
           SERVER_EXE: ${{ steps.artifact.outputs.server_path }}
         run: |
           $clientAsset = Join-Path $env:RUNNER_TEMP 'YordleYapper.exe'
+          $legacyAsset = Join-Path $env:RUNNER_TEMP 'lolproxchat.exe'
           Copy-Item -LiteralPath $env:EXE -Destination $clientAsset -Force
+          Copy-Item -LiteralPath $env:EXE -Destination $legacyAsset -Force
           gh release view $env:TAG 2>$null
           if ($LASTEXITCODE -eq 0) {
             $releaseExists = $true
@@ -186,7 +188,7 @@ jobs:
             gh release create $env:TAG --draft --title $env:TAG --notes-file RELEASE_NOTES.md --target $env:GITHUB_SHA
             if ($LASTEXITCODE -ne 0) { throw 'Could not create the draft release.' }
           }
-          gh release upload $env:TAG $clientAsset $env:SERVER_EXE --clobber
+          gh release upload $env:TAG $clientAsset $legacyAsset $env:SERVER_EXE --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Could not upload the release assets.' }
           gh release edit $env:TAG --notes-file RELEASE_NOTES.md
           if ($LASTEXITCODE -ne 0) { throw 'Could not update the release notes.' }
