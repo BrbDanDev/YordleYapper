@@ -1,6 +1,7 @@
 import type { AppAudioOutput, AppTap } from './app-audio-output';
 import { getIceServers } from '../core/config';
 import { getForceTurnRelay } from './privacy';
+import { tuneOpusSdp } from './webrtc-opus';
 
 // Time-based EMA on per-peer volume targets. Damps CV-jitter spikes without
 // introducing audible ramp delay on normal updates. Three properties:
@@ -60,9 +61,9 @@ function makeRoomImpulse(context: AudioContext): AudioBuffer {
       seed = (seed * 16807) % 2147483647;
       const noise = (seed / 1073741823.5) - 1;
       const time = i / context.sampleRate;
-      const decay = Math.exp(-time * (channel === 0 ? 2.2 : 2.45));
+      const decay = Math.exp(-time * (channel === 0 ? 2.6 : 2.8));
       const early = time < 0.12 ? 1.0 : 0.72;
-      data[i] = noise * decay * early * 0.42;
+      data[i] = noise * decay * early * 0.32;
     }
   }
   return impulse;
@@ -325,7 +326,7 @@ export class PeerConnection {
       // full voice gain before the dry/wet split made distant reverb vanish
       // exactly when it should become more apparent.
       if (this.reverbTailTimer === null) {
-        this.reverbGain?.gain.setTargetAtTime(Math.sqrt(v) * this.voiceReverbMix, now, 0.08);
+        this.reverbGain?.gain.setTargetAtTime(Math.pow(v, 0.8), now, 0.08);
       }
     } else if (this.effectsGraphFailed) {
       this.audioElement.volume = v;
@@ -352,7 +353,7 @@ export class PeerConnection {
       panner.maxDistance = 3;
       panner.rolloffFactor = 0.65;
       const dry = ctx.createGain();
-      const reverbSend = ctx.createGain(); reverbSend.gain.value = 1;
+      const reverbSend = ctx.createGain(); reverbSend.gain.value = 0;
       const reverb = ctx.createConvolver(); reverb.buffer = makeRoomImpulse(ctx);
       const reverbGain = ctx.createGain(); reverbGain.gain.value = 0;
       const mix = ctx.createGain();
@@ -411,26 +412,27 @@ export class PeerConnection {
       this.panner.positionY.setTargetAtTime(0, now, 0.12);
       this.panner.positionZ.setTargetAtTime(options.spatial ? panZ : -0.1, now, 0.12);
       const mix = Math.max(0, Math.min(0.8, options.echoMix ?? 0));
-      const requestedReverbMix = mix * 0.9;
+      const requestedReverbMix = mix * 0.68;
       if (requestedReverbMix < this.voiceReverbMix) {
         this.pendingReverbMix = requestedReverbMix;
-        if (this.reverbHoldTimer !== null) window.clearTimeout(this.reverbHoldTimer);
-        this.reverbHoldTimer = window.setTimeout(() => {
-          this.reverbHoldTimer = null;
-          this.voiceReverbMix = this.pendingReverbMix;
-          if (this.reverbTailTimer === null && this.effectContext && this.reverbGain) {
-            const volume = this.smoothedVolume ?? this.targetVolume;
-            this.reverbGain.gain.setTargetAtTime(Math.sqrt(volume) * this.voiceReverbMix, this.effectContext.currentTime, 0.6);
-          }
-        }, 450);
+        if (this.reverbHoldTimer === null) {
+          this.reverbHoldTimer = window.setTimeout(() => {
+            this.reverbHoldTimer = null;
+            this.voiceReverbMix = this.pendingReverbMix;
+            if (this.effectContext && this.reverbSend) {
+              this.reverbSend.gain.setTargetAtTime(this.voiceReverbMix, this.effectContext.currentTime, 0.6);
+            }
+          }, 450);
+        }
       } else {
         if (this.reverbHoldTimer !== null) window.clearTimeout(this.reverbHoldTimer);
         this.reverbHoldTimer = null;
         this.voiceReverbMix = requestedReverbMix;
+        this.reverbSend?.gain.setTargetAtTime(this.voiceReverbMix, now, 0.24);
       }
       const volume = this.smoothedVolume ?? this.targetVolume;
       this.dryGain?.gain.setTargetAtTime(volume * (1 - this.voiceReverbMix * 0.2), now, 0.32);
-      if (this.reverbTailTimer === null) this.reverbGain?.gain.setTargetAtTime(Math.sqrt(volume) * this.voiceReverbMix, now, 0.32);
+      if (this.reverbTailTimer === null) this.reverbGain?.gain.setTargetAtTime(Math.pow(volume, 0.8), now, 0.32);
     }
     this.appTap?.setVoiceEffects({ muffling: options.muffling, panX, panZ, spatial: options.spatial, echoMix: options.echoMix, echoDelay: options.echoDelay, chaosHighpass: options.chaosHighpass, chaosBandpass: options.chaosBandpass });
   }
@@ -517,7 +519,7 @@ export class PeerConnection {
 
   async createOffer(options?: { iceRestart?: boolean }): Promise<RTCSessionDescriptionInit> {
     const offer = await this.pc.createOffer(options);
-    offer.sdp = this.enhanceOpusSdp(offer.sdp || '');
+    offer.sdp = tuneOpusSdp(offer.sdp || '');
     await this.pc.setLocalDescription(offer);
     return offer;
   }
@@ -527,33 +529,9 @@ export class PeerConnection {
     this.hasRemoteDescription = true;
     await this.flushPendingCandidates();
     const answer = await this.pc.createAnswer();
-    answer.sdp = this.enhanceOpusSdp(answer.sdp || '');
+    answer.sdp = tuneOpusSdp(answer.sdp || '');
     await this.pc.setLocalDescription(answer);
     return answer;
-  }
-
-  /**
-   * Modify SDP to set Opus bitrate to 128kbps and disable DTX.
-   * DTX (Discontinuous Transmission) stops sending packets during silence
-   * to save bandwidth, but the ramp out of silence-mode at speech onset
-   * clips the first packet or two — audible as missing word starts. The
-   * bandwidth cost of always-on transmission is trivial for voice.
-   */
-  private enhanceOpusSdp(sdp: string): string {
-    return sdp.replace(
-      /a=fmtp:111 (.*)/g,
-      (match, params) => {
-        let enhanced = params;
-        if (!enhanced.includes('maxaveragebitrate')) {
-          enhanced += ';maxaveragebitrate=128000';
-        }
-        // Explicitly disable DTX so word starts/ends aren't clipped.
-        if (!enhanced.includes('usedtx')) {
-          enhanced += ';usedtx=0';
-        }
-        return 'a=fmtp:111 ' + enhanced;
-      }
-    );
   }
 
   async handleAnswer(answer: RTCSessionDescriptionInit): Promise<void> {
@@ -602,16 +580,20 @@ export class PeerConnection {
   }
 
   private ringOutReverb(): void {
-    this.appTap?.setGain(0, true);
+    // A sudden stop may ring out an existing shout tail, but must not create
+    // reverb when this voice was dry (e.g. nearby/quiet or already out of range).
+    const hasReverbTail = this.voiceReverbMix > 0.005;
+    this.appTap?.setGain(0, hasReverbTail);
+    if (!hasReverbTail) return;
     const now = this.effectContext?.currentTime;
     if (now === undefined || !this.reverbGain) return;
-    this.reverbGain.gain.setTargetAtTime(Math.max(this.voiceReverbMix, 0.28), now, 0.025);
+    this.reverbGain.gain.setTargetAtTime(Math.max(Math.pow(this.smoothedVolume ?? this.targetVolume, 0.8), 0.2), now, 0.025);
     if (this.reverbTailTimer !== null) window.clearTimeout(this.reverbTailTimer);
     this.reverbTailTimer = window.setTimeout(() => {
       this.reverbTailTimer = null;
       if (this.effectContext && this.reverbGain) {
         const volume = this.smoothedVolume ?? this.targetVolume;
-        this.reverbGain.gain.setTargetAtTime(Math.sqrt(volume) * this.voiceReverbMix, this.effectContext.currentTime, 0.12);
+        this.reverbGain.gain.setTargetAtTime(Math.pow(volume, 0.8), this.effectContext.currentTime, 0.12);
       }
     }, 2200);
   }
@@ -770,6 +752,12 @@ export class PeerConnection {
     if (outAudio) parts.push('outBytes=' + outAudio.bytesSent);
     if (inAudio) parts.push('inBytes=' + inAudio.bytesReceived);
     if (inAudio && typeof inAudio.packetsLost === 'number') parts.push('lost=' + inAudio.packetsLost);
+    if (inAudio && typeof inAudio.packetsReceived === 'number') parts.push('received=' + inAudio.packetsReceived);
+    if (inAudio && typeof inAudio.jitter === 'number') parts.push('jitter=' + Math.round(inAudio.jitter * 1000) + 'ms');
+    if (inAudio && typeof inAudio.jitterBufferDelay === 'number' && typeof inAudio.jitterBufferEmittedCount === 'number' && inAudio.jitterBufferEmittedCount > 0) {
+      parts.push('jitterBuffer=' + Math.round(inAudio.jitterBufferDelay / inAudio.jitterBufferEmittedCount * 1000) + 'ms');
+    }
+    if (inAudio && typeof inAudio.concealedSamples === 'number') parts.push('concealed=' + inAudio.concealedSamples);
     console.log('[WebRTC stats]', this.remoteName, parts.join(' '));
   }
 }

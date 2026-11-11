@@ -4,6 +4,13 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ## [Unreleased]
 
+## [v0.9.9] — 2026-11-11
+
+### Fixed
+- Reverb now starts only for a sufficiently loud voice beyond shout range, follows smooth live loudness/distance curves, and fades with distance. Fixed the reverb hold timer so repeated updates cannot keep it active forever; sudden cutoffs ring out only an existing wet tail. Matched browser and App Audio behavior and softened the room return.
+- Rift loudness range and filtering now continue to work with the deployed legacy server using relayed voice levels and visible champion positions.
+- Negotiate Opus by its actual SDP payload type, cap bitrate at 48 kbps per peer, enable in-band FEC for packet-loss recovery, and keep DTX disabled to preserve word onsets. Added jitter/loss diagnostics for multiplayer troubleshooting.
+
 ## [v0.9.8] - 2026-11-11
 
 ### Fixed
@@ -732,6 +739,7 @@ Most of this release was contributed by a tester's friend, who reworked hearing 
 Initial public iteration: Overwolf → Tauri 2 migration, Supabase-stack → custom 1-container WebSocket signaling server, minimap CV pipeline (HSV color filter + blob detection + ONNX champion classifier), WebRTC P2P voice with AES-GCM encrypted position blobs computed server-side, in-app updater. See `docs/plans/` for the historical design + implementation documents from that period.
 
 [Unreleased]: https://github.com/danthi123/LoLProxChat/compare/v0.4.4...HEAD
+[v0.9.9]: https://github.com/danthi123/LoLProxChat/releases/tag/v0.9.9
 [v0.7.9]: https://github.com/danthi123/LoLProxChat/releases/tag/v0.7.9
 [v0.7.8]: https://github.com/danthi123/LoLProxChat/releases/tag/v0.7.8
 [v0.7.7]: https://github.com/danthi123/LoLProxChat/releases/tag/v0.7.7

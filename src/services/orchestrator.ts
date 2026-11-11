@@ -15,6 +15,7 @@ import { disownAfterSec } from './tracking-helpers';
 import { BlobScorer, ChampionClassifier } from './champion-classifier';
 import { PlayerChampion, SkinAwareScorer, TeammateSkin, TemplateSet, loadBaseTemplates, loadTeamTemplates } from './skin-matcher';
 import { CameraHearing } from './camera-hearing';
+import { riftReverbMix, riftVoiceVolume } from './rift-voice';
 import { getRiftVoices, getRiftStereoFromCamera, getMatchRecapEnabled, getDeadVoiceMode } from './audio-prefs';
 import { getSpatialAudio, getVoiceMuffling } from './audio-prefs';
 import type { RoomHostOptions, RoomState, ListeningMode } from '../core/room-policy';
@@ -143,13 +144,6 @@ const SHARED_RESET_NOTICE_MS = 4_000;
  * (LOST_ALLY_ANCHOR_MS in server/src/volumes.ts).
  */
 export const LOST_ALLY_ANCHOR_MS = 20_000;
-// WebRTC audioLevel is linear (0..1). Ordinary speech is commonly around
-// 0.02; reverb starts only once a voice is clearly raised above that.
-const SHOUT_AUDIO_LEVEL = 0.12;
-const MAX_SHOUT_AUDIO_LEVEL = 0.36;
-const SHOUT_RANGE_MIN = 2300;
-const SHOUT_RANGE_MAX = 2600;
-const SHOUT_REVERB_MAX_DISTANCE = 3600;
 
 export class Orchestrator {
   private readonly deps: OrchestratorDeps;
@@ -170,6 +164,8 @@ export class Orchestrator {
   private lastSessionFailure:
     { sig: string; reason: SessionFailureReason; detail: string; at: number } | null = null;
   private peerStates: Map<string, PeerState> = new Map();
+  /** Sender-reported loudness is relayed unchanged by legacy room servers. */
+  private peerVoiceLevels = new Map<string, number>();
   private replayRecorder = new ReplayRecorder();
   private replayConsent = false;
   private replayParticipants = new Set<string>();
@@ -1049,6 +1045,9 @@ export class Orchestrator {
       // Ignore late results from a match that ended or switched sessions.
       if (this.session !== session || this.audio !== audio) return;
       const peerVolumes = { ...result.peerVolumes };
+      if (mode === 'rift' && result.peerEcho === undefined) {
+        this.applyLegacyRiftRanges(peerVolumes, session);
+      }
       if (mode !== 'camera' && visibilityFilter && this.cameraHearing?.hasPlayers()) {
         const visible = this.cameraHearing.visibleEnemies(performance.now());
         for (const [name, state] of this.peerStates) {
@@ -1064,7 +1063,7 @@ export class Orchestrator {
       }
       const audibleVolumes = this.filterDeadPeerVolumes(peerVolumes);
       audio.applyPeerVolumes(audibleVolumes);
-      this.applySpatialAudio(audibleVolumes, mode === 'camera', result.peerEcho);
+      this.applySpatialAudio(audibleVolumes, mode === 'camera');
     } catch (e) {
       console.error('[LoLProxChat] Volume computation failed:', e);
       // Don't let a failed scoring request leave someone audible at an old
@@ -1131,6 +1130,30 @@ export class Orchestrator {
       else if (selfDead && peer.isDead && mode !== 'off') filtered[name] = 1;
     }
     return filtered;
+  }
+
+  /** Older deployed servers ignore Rift's loudness/range fields. Keep the
+   *  feature working from visible champion positions and relayed mic levels. */
+  private applyLegacyRiftRanges(volumes: Record<string, number>, session: GameSession): void {
+    const snapshot = this.cameraHearing?.audioMap(performance.now());
+    const selfId = this.cameraIdFor(this.localSummonerName);
+    const origin = selfId ? snapshot?.positions.get(selfId) : undefined;
+    if (!snapshot || !origin) return;
+    const dims = MAP_DIMENSIONS[session.mapType ?? 'summoners_rift'];
+    for (const [name, state] of this.peerStates) {
+      if (state.team === session.localPlayer.team && !getAllyProximity()) continue;
+      const id = this.cameraIdFor(name);
+      const position = id ? snapshot.positions.get(id) : undefined;
+      const level = this.peerVoiceLevels.get(name);
+      if (!position || level === undefined) continue;
+      const distance = Math.hypot(
+        (position.x - origin.x) * dims.width / snapshot.width,
+        (position.y - origin.y) * dims.height / snapshot.height,
+      );
+      const volume = riftVoiceVolume(distance, level);
+      if (volume > 0) volumes[name] = volume;
+      else delete volumes[name];
+    }
   }
 
   /** Tells camera mode which players are dead (no icon, so never the unknown
@@ -1356,6 +1379,10 @@ export class Orchestrator {
       : undefined;
     if (entry && isStreamerMode(entry.player, this.session.hasTagLines)) return;
 
+    if (typeof peer.voiceLevel === 'number' && Number.isFinite(peer.voiceLevel)) {
+      this.peerVoiceLevels.set(peer.summonerName, Math.max(0, Math.min(1, peer.voiceLevel)));
+    }
+
     const existing = this.peerStates.get(peer.summonerName);
     if (!existing) {
       const sameTeam = peer.team === this.session.localPlayer.team;
@@ -1384,6 +1411,7 @@ export class Orchestrator {
     } catch (e) {
       console.error('[LoLProxChat] Failed to connect to peer:', peer.summonerName, e);
       this.peerStates.delete(peer.summonerName);
+      this.peerVoiceLevels.delete(peer.summonerName);
     }
   }
 
@@ -1506,6 +1534,7 @@ export class Orchestrator {
   private handlePeerLeave(name: string): void {
     this.audio?.disconnectPeer(name);
     this.peerStates.delete(name);
+    this.peerVoiceLevels.delete(name);
     this.replayParticipants.delete(name);
     this.refreshReplayConsent();
     this.broadcastOverlayState();
@@ -1849,7 +1878,7 @@ export class Orchestrator {
     return forced && forced !== 'inherit' ? forced : getDeadVoiceMode();
   }
 
-  private applySpatialAudio(peerVolumes: Record<string, number>, cameraMode: boolean, peerEcho: Record<string, { mix: number; delay: number }> = {}): void {
+  private applySpatialAudio(peerVolumes: Record<string, number>, cameraMode = false): void {
     if (!this.audio) return;
     const mode = this.listeningMode();
     const options = this.roomState?.isPrivate ? this.roomState.options : undefined;
@@ -1888,24 +1917,12 @@ export class Orchestrator {
       const distanceMuffling = Math.max(0, Math.min(1, (effectiveDistance - (hiddenEnemy ? 180 : 450)) / (hiddenEnemy ? 1120 : 1380))) * 0.84;
       const hiddenMuffling = hiddenEnemy ? 0.64 : 0;
       const mufflingAmount = Math.min(1, distanceMuffling + hiddenMuffling);
-      const echo = peerEcho[name];
-      const voiceLevel = this.audio.getPeerVoiceLevel(name);
-      const shoutStrength = Math.max(0, Math.min(1,
-        (voiceLevel - SHOUT_AUDIO_LEVEL) / (MAX_SHOUT_AUDIO_LEVEL - SHOUT_AUDIO_LEVEL)));
-      const shoutRange = SHOUT_RANGE_MIN + shoutStrength * (SHOUT_RANGE_MAX - SHOUT_RANGE_MIN);
-      // A raised voice gains a smooth reverb tail only beyond its shout range.
-      // Playback calculates this locally, so it works with the legacy server.
-      const beyondShout = effectiveDistance > shoutRange
-        ? Math.max(0, Math.min(1,
-          (effectiveDistance - shoutRange) / Math.max(1, SHOUT_REVERB_MAX_DISTANCE - shoutRange)))
-        : 0;
-      const shoutReverb = mode === 'rift' && shoutStrength > 0 && beyondShout > 0
-        ? shoutStrength * (0.06 + beyondShout * 0.48)
-        : 0;
+      const voiceLevel = this.peerVoiceLevels.get(name) ?? 0;
+      const shoutReverb = mode === 'rift' ? riftReverbMix(effectiveDistance, voiceLevel) : 0;
       const chaosReverb = this.chaosActive.has('longrange') && effectiveDistance > 1000
         ? Math.min(0.42, 0.08 + (effectiveDistance - 1000) / 10000) : 0;
       const deadReverb = state.isDead ? 0.1 : 0;
-      effects[name] = { muffling: muffling ? mufflingAmount : 0, panX, panZ, spatial, echoMix: Math.max(shoutReverb, echo?.mix ?? 0, chaosReverb, deadReverb), echoDelay: chaosReverb > 0 ? 0.22 + chaosReverb : (echo?.delay ?? (deadReverb ? 0.08 : 0.12)) };
+      effects[name] = { muffling: muffling ? mufflingAmount : 0, panX, panZ, spatial, echoMix: Math.max(shoutReverb, chaosReverb, deadReverb), echoDelay: chaosReverb > 0 ? 0.22 + chaosReverb : (deadReverb ? 0.08 : 0.12) };
     }
     this.audio.applyPeerVoiceEffects(effects);
   }
@@ -2202,6 +2219,7 @@ export class Orchestrator {
     this.gameState.clearSession();
     this.session = null;
     this.peerStates.clear();
+    this.peerVoiceLevels.clear();
     this.remoteReset = null;
     this.lastRemoteResetMs = -Infinity;
     this.lastAudioToggles = null;
