@@ -6,6 +6,16 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 - Use `YordleYapper.exe` as the branded Windows download name while retaining the `lolproxchat.exe` compatibility asset for existing updaters.
 
+## [v0.9.5] - 2026-11-10
+
+### Added
+- Replace the isolated voice-lab sound effect with a simulated second participant over a local WebRTC loopback. Recorded microphone audio and the fallback test tone now traverse the real incoming peer playback, spatial audio, gain smoothing, filtering, reverb, and output-device path.
+- Keep one virtual player attached to the chosen debug-map position while the listener moves, so proximity transitions can be heard live.
+- Clarify that the local loopback validates local WebRTC media and browser-side playback, but does not test App Audio's native route, signaling server, or internet path.
+
+### Changed
+- Apply the debug hidden-player control to the simulated peer's live voice filter.
+
 ## [v0.9.4] - 2026-11-10
 
 ### Fixed

@@ -1,4 +1,7 @@
-/** One-speaker local sound check for production distance, filters, reverb and HRTF. */
+import { PeerConnection } from './peer-connection';
+import { getStoredOutputDeviceId } from './devices';
+
+/** Ranges used by the local voice lab's synthetic proximity response. */
 export const BASE_VOICE_RANGE = 2300;
 export const QUIET_VOICE_RANGE = 1250;
 export const MAX_SHOUT_RANGE = 2600;
@@ -6,25 +9,7 @@ export const MAX_ECHO_RANGE = 3600;
 export const SHOUT_LEVEL_THRESHOLD = 0.55;
 export const MAX_ECHO_DELAY_SECONDS = 2;
 
-interface PlacedVoice {
-  sourceNode: AudioNode;
-  oscillators: OscillatorNode[];
-  extraNodes: AudioNode[];
-  mediaElement?: HTMLAudioElement;
-  objectUrl?: string;
-  high: BiquadFilterNode;
-  low: BiquadFilterNode;
-  panner: PannerNode;
-  dry: GainNode;
-  reverb: ConvolverNode;
-  wet: GainNode;
-  distance: number;
-  sourcePosition: { x: number; y: number };
-  listenerPosition: { x: number; y: number };
-  hidden: boolean;
-  panX: number;
-  panZ: number;
-}
+interface Position { x: number; y: number }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -46,31 +31,31 @@ export function echoForDistance(distance: number, shoutRange: number): { mix: nu
   return { mix: 0.06 + t * 0.48, delay: 0.12 + t * (MAX_ECHO_DELAY_SECONDS - 0.12) };
 }
 
-function makeRoomImpulse(context: AudioContext): AudioBuffer {
-  const length = Math.floor(context.sampleRate * MAX_ECHO_DELAY_SECONDS);
-  const impulse = context.createBuffer(2, length, context.sampleRate);
-  for (let channel = 0; channel < 2; channel++) {
-    const data = impulse.getChannelData(channel);
-    let seed = 0x51f15e + channel * 7919;
-    for (let i = 0; i < length; i++) {
-      seed = (seed * 16807) % 2147483647;
-      const time = i / context.sampleRate;
-      const noise = (seed / 1073741823.5) - 1;
-      data[i] = noise * Math.exp(-time * (channel === 0 ? 3 : 3.35)) * (time < 0.12 ? 1 : 0.72) * 0.32;
-    }
-  }
-  return impulse;
-}
-
-/** Single speaker. Creating the context is silent; only placing a voice plays sound. */
+/**
+ * One local, two-participant voice test. The recorded/sample talker is sent
+ * through a real local WebRTC loopback; the receiving side is the production
+ * PeerConnection playback/effects graph used for remote participants.
+ */
 export class VoiceDebugSimulator {
   private context: AudioContext | null = null;
-  private placedVoice: PlacedVoice | null = null;
-  private loudness = 0.55;
+  private destination: MediaStreamAudioDestinationNode | null = null;
+  private player: { peer: PeerConnection; closeSender: () => void } | null = null;
+  private sourceNodes: AudioNode[] = [];
+  private oscillators: OscillatorNode[] = [];
+  private sampleElement: HTMLAudioElement | null = null;
+  private sampleSource: MediaElementAudioSourceNode | null = null;
+  private sampleUrl: string | null = null;
+  private recordingBlob: Blob | null = null;
   private recordingLoudness = 0;
+  private loudness = 0.4;
   private muffling = true;
   private stereo = true;
-  private recordingBlob: Blob | null = null;
+  private hidden = false;
+  private speaker: Position | null = null;
+  private listener: Position | null = null;
+  private directionListener: Position | null = null;
+  private ticker: number | null = null;
+  private closing = false;
 
   get isRunning(): boolean { return this.context !== null; }
   get shoutingRange(): number { return shoutRangeForLevel(this.activeLoudness); }
@@ -78,151 +63,179 @@ export class VoiceDebugSimulator {
   get recordingReady(): boolean { return this.recordingBlob !== null; }
   get usesRecording(): boolean { return this.recordingBlob !== null; }
   get activeLoudness(): number { return this.recordingBlob ? this.recordingLoudness : this.loudness; }
-  get placedDistance(): number | null { return this.placedVoice ? Math.round(this.placedVoice.distance) : null; }
+  get placedDistance(): number | null { return this.speaker && this.listener ? Math.round(Math.hypot(this.speaker.x - this.listener.x, this.speaker.y - this.listener.y)) : null; }
   get currentShoutingRange(): number { return shoutRangeForLevel(this.activeLoudness); }
 
   async start(): Promise<void> {
     if (this.context) return;
-    const ctx = new AudioContext();
-    await ctx.resume();
-    this.context = ctx;
+    const context = new AudioContext();
+    this.context = context;
+    try {
+      if (context.state === 'suspended') await context.resume();
+      const destination = context.createMediaStreamDestination();
+      this.destination = destination;
+      this.sampleElement = new Audio();
+      this.sampleElement.loop = true;
+      this.sampleElement.preload = 'auto';
+      this.sampleSource = context.createMediaElementSource(this.sampleElement);
+      this.sampleSource.connect(destination);
+      if (this.recordingBlob) this.playRecording();
+      else this.startTone();
+      this.player = await PeerConnection.createLocalTest('Voice Lab · Second Player', destination.stream);
+      await this.player.peer.setOutputDevice(getStoredOutputDeviceId());
+      this.ticker = window.setInterval(() => this.update(), 50);
+      this.update();
+    } catch (error) {
+      await this.stop();
+      throw error;
+    }
   }
 
   setLoudness(value: number): void { this.loudness = clamp(value, 0, 1); this.update(); }
   setMuffling(value: boolean): void { this.muffling = value; this.update(); }
   setStereo(value: boolean): void { this.stereo = value; this.update(); }
-  setRecording(blob: Blob, loudness: number): void { this.recordingBlob = blob; this.recordingLoudness = clamp(loudness, 0, 1); this.update(); }
-  clearRecording(): void { this.recordingBlob = null; this.recordingLoudness = 0; this.update(); }
-
-  /** Place the one virtual speaker at the clicked map position. */
-  placeSpeaker(source: { x: number; y: number }, listener: { x: number; y: number }, hidden: boolean, directionListener = listener): number {
-    const ctx = this.context;
-    if (!ctx) throw new Error('Audio is not ready. Click the map again to start it.');
-    if (this.placedVoice) this.disposeVoice(this.placedVoice);
-    const dx = source.x - listener.x;
-    const dy = source.y - listener.y;
-    const distance = Math.hypot(dx, dy);
-    const high = ctx.createBiquadFilter(); high.type = 'highpass'; high.frequency.value = 75;
-    const low = ctx.createBiquadFilter(); low.type = 'lowpass'; low.frequency.value = 18000;
-    const panner = ctx.createPanner();
-    panner.panningModel = 'HRTF'; panner.distanceModel = 'inverse';
-    panner.refDistance = 1; panner.maxDistance = 3; panner.rolloffFactor = 0.65;
-    const dry = ctx.createGain();
-    const reverb = ctx.createConvolver(); reverb.buffer = makeRoomImpulse(ctx);
-    const wet = ctx.createGain(); wet.gain.value = 0;
-    const send = ctx.createGain(); send.gain.value = 1;
-    const mix = ctx.createGain();
-    high.connect(low).connect(panner);
-    panner.connect(dry).connect(mix);
-    panner.connect(send).connect(reverb).connect(wet).connect(mix);
-    mix.connect(ctx.destination);
-
-    const panDx = source.x - directionListener.x;
-    const panDy = source.y - directionListener.y;
-    const panLength = Math.max(1, Math.hypot(panDx, panDy));
-    panner.positionX.value = this.stereo ? clamp(panDx / panLength, -1, 1) : 0;
-    panner.positionY.value = 0;
-    panner.positionZ.value = this.stereo ? clamp(-panDy / panLength, -1, 1) : -0.1;
-
-    let sourceNode: AudioNode;
-    const oscillators: OscillatorNode[] = [];
-    const extraNodes: AudioNode[] = [];
-    let mediaElement: HTMLAudioElement | undefined;
-    let objectUrl: string | undefined;
-    if (this.recordingBlob) {
-      objectUrl = URL.createObjectURL(this.recordingBlob);
-      mediaElement = new Audio(objectUrl);
-      mediaElement.loop = true;
-      mediaElement.preload = 'auto';
-      sourceNode = ctx.createMediaElementSource(mediaElement);
-      sourceNode.connect(high);
-    } else {
-      const oscillator = ctx.createOscillator(); oscillator.type = 'triangle'; oscillator.frequency.value = 235;
-      const harmonic = ctx.createOscillator(); harmonic.type = 'sawtooth'; harmonic.frequency.value = 470;
-      const voiceMix = ctx.createGain(); voiceMix.gain.value = 0.16;
-      oscillator.connect(voiceMix); harmonic.connect(voiceMix); voiceMix.connect(high);
-      oscillator.start(); harmonic.start();
-      extraNodes.push(voiceMix);
-      sourceNode = oscillator;
-      oscillators.push(oscillator, harmonic);
-    }
-
-    const voice: PlacedVoice = {
-      sourceNode, oscillators, extraNodes, mediaElement, objectUrl, high, low, panner, dry, reverb, wet,
-      distance, sourcePosition: { ...source }, listenerPosition: { ...listener }, hidden,
-      panX: panDx / panLength, panZ: -panDy / panLength,
-    };
-    this.placedVoice = voice;
+  setRecording(blob: Blob, loudness: number): void {
+    this.recordingBlob = blob;
+    this.recordingLoudness = clamp(loudness, 0, 1);
+    if (this.context) this.playRecording();
     this.update();
-    if (mediaElement) void mediaElement.play().catch((error) => console.warn('[Voice Lab] Sample playback failed:', error));
-    return Math.round(distance);
+  }
+  clearRecording(): void {
+    this.recordingBlob = null;
+    this.recordingLoudness = 0;
+    if (this.context) this.startTone();
+    this.update();
+  }
+  setHidden(value: boolean): void { this.hidden = value; this.update(); }
+
+  /** Select exactly one simulated player's position on the debug map. */
+  async placeSpeaker(source: Position, listener: Position, hidden: boolean, directionListener = listener): Promise<number> {
+    if (!this.context || !this.player) throw new Error('The second-player WebRTC test is not ready.');
+    // Map placement is a user gesture. Retry here for samples captured with
+    // the 10-second auto-stop, which may have lost autoplay activation.
+    if (this.recordingBlob && this.sampleElement?.paused) {
+      void this.sampleElement.play().catch((error) => console.warn('[Voice Lab] Sample playback is still blocked:', error));
+    }
+    this.speaker = { ...source };
+    this.listener = { ...listener };
+    this.directionListener = { ...directionListener };
+    this.hidden = hidden;
+    this.update();
+    return this.placedDistance ?? 0;
   }
 
-  /** Move the listener while the map-placed speaker stays fixed in world space. */
-  updateListener(listener: { x: number; y: number }, directionListener = listener): number | null {
-    const voice = this.placedVoice;
-    const ctx = this.context;
-    if (!voice || !ctx) return null;
-    const dx = voice.sourcePosition.x - listener.x;
-    const dy = voice.sourcePosition.y - listener.y;
-    const length = Math.max(1, Math.hypot(dx, dy));
-    voice.listenerPosition = { ...listener };
-    voice.distance = length;
-    const panDx = voice.sourcePosition.x - directionListener.x;
-    const panDy = voice.sourcePosition.y - directionListener.y;
-    const panLength = Math.max(1, Math.hypot(panDx, panDy));
-    voice.panX = panDx / panLength;
-    voice.panZ = -panDy / panLength;
-    const now = ctx.currentTime;
-    voice.panner.positionX.setTargetAtTime(this.stereo ? clamp(voice.panX, -1, 1) : 0, now, 0.12);
-    voice.panner.positionY.setTargetAtTime(0, now, 0.12);
-    voice.panner.positionZ.setTargetAtTime(this.stereo ? clamp(voice.panZ, -1, 1) : -0.1, now, 0.12);
+  /** Keep the simulated peer at its fixed map position while the listener moves. */
+  updateListener(listener: Position, directionListener = listener): number | null {
+    if (!this.speaker) return null;
+    this.listener = { ...listener };
+    this.directionListener = { ...directionListener };
     this.update();
-    return Math.round(length);
+    return this.placedDistance;
   }
 
   async stop(): Promise<void> {
-    const ctx = this.context;
+    if (this.closing) return;
+    this.closing = true;
+    if (this.ticker !== null) window.clearInterval(this.ticker);
+    this.ticker = null;
+    const player = this.player;
+    this.player = null;
+    player?.peer.close();
+    player?.closeSender();
+    this.sampleElement?.pause();
+    this.sampleElement?.removeAttribute('src');
+    this.sampleElement?.load();
+    this.sampleElement = null;
+    this.sampleSource?.disconnect();
+    this.sampleSource = null;
+    this.stopTone();
+    for (const node of this.sourceNodes) { try { node.disconnect(); } catch { /* already disconnected */ } }
+    this.sourceNodes = [];
+    if (this.sampleUrl) URL.revokeObjectURL(this.sampleUrl);
+    this.sampleUrl = null;
+    this.destination = null;
+    const context = this.context;
     this.context = null;
-    if (this.placedVoice) this.disposeVoice(this.placedVoice);
-    this.placedVoice = null;
-    if (ctx) await ctx.close().catch(() => undefined);
+    this.speaker = null;
+    this.listener = null;
+    this.directionListener = null;
+    if (context) await context.close().catch(() => undefined);
+    this.closing = false;
   }
 
+  private startTone(): void {
+    if (!this.context || !this.destination || !this.sampleSource) return;
+    this.stopTone();
+    this.sampleElement?.pause();
+    if (this.sampleUrl) URL.revokeObjectURL(this.sampleUrl);
+    this.sampleUrl = null;
+    const voiceMix = this.context.createGain();
+    voiceMix.gain.value = 0.16;
+    const oscillator = this.context.createOscillator();
+    const harmonic = this.context.createOscillator();
+    oscillator.type = 'triangle'; oscillator.frequency.value = 235;
+    harmonic.type = 'sawtooth'; harmonic.frequency.value = 470;
+    oscillator.connect(voiceMix); harmonic.connect(voiceMix);
+    voiceMix.connect(this.destination);
+    oscillator.start(); harmonic.start();
+    this.oscillators.push(oscillator, harmonic);
+    this.sourceNodes.push(voiceMix);
+  }
+
+  private stopTone(): void {
+    for (const oscillator of this.oscillators) { try { oscillator.stop(); } catch { /* already stopped */ } }
+    for (const node of this.sourceNodes) { try { node.disconnect(); } catch { /* already disconnected */ } }
+    this.oscillators = [];
+    this.sourceNodes = [];
+  }
+
+  private playRecording(): void {
+    if (!this.sampleElement || !this.sampleSource || !this.context || !this.destination || !this.recordingBlob) return;
+    this.stopTone();
+    if (this.sampleUrl) URL.revokeObjectURL(this.sampleUrl);
+    this.sampleUrl = URL.createObjectURL(this.recordingBlob);
+    this.sampleElement.src = this.sampleUrl;
+    void this.sampleElement.play().catch((error) => console.warn('[Voice Lab] Sample playback failed:', error));
+  }
+
+  /** Derive proximity, level, occlusion and HRTF from the two map positions. */
   private update(): void {
-    const voice = this.placedVoice;
-    const ctx = this.context;
-    if (!voice || !ctx) return;
-    const now = ctx.currentTime;
-    const activeLoudness = this.activeLoudness;
-    const shoutRange = shoutRangeForLevel(activeLoudness);
-    const voicedShouting = activeLoudness >= SHOUT_LEVEL_THRESHOLD;
-    const shoutProgress = clamp((activeLoudness - SHOUT_LEVEL_THRESHOLD) / (1 - SHOUT_LEVEL_THRESHOLD), 0, 1);
-    const hearLimit = voicedShouting
-      ? BASE_VOICE_RANGE + shoutProgress * (MAX_ECHO_RANGE - BASE_VOICE_RANGE)
-      : voiceRangeForLevel(activeLoudness);
+    const context = this.context;
+    const player = this.player?.peer;
+    const source = this.speaker;
+    const listener = this.listener;
+    if (!context || !player || !source || !listener) return;
+    const dx = source.x - listener.x;
+    const dy = source.y - listener.y;
+    const distance = Math.hypot(dx, dy);
+    const level = this.activeLoudness;
+    const shouting = level >= SHOUT_LEVEL_THRESHOLD;
+    const shoutRange = shoutRangeForLevel(level);
+    const hearLimit = shouting
+      ? BASE_VOICE_RANGE + clamp((level - SHOUT_LEVEL_THRESHOLD) / (1 - SHOUT_LEVEL_THRESHOLD), 0, 1) * (MAX_ECHO_RANGE - BASE_VOICE_RANGE)
+      : voiceRangeForLevel(level);
     const fullVolumeRange = Math.min(200, hearLimit * (200 / BASE_VOICE_RANGE));
-    const t = clamp((voice.distance - fullVolumeRange) / Math.max(1, hearLimit - fullVolumeRange), 0, 1);
-    const volume = voice.distance <= fullVolumeRange ? 1 : (voice.distance >= hearLimit ? 0 : (1 - t) ** 2);
-    const mufflingStart = voice.hidden ? 250 : 700;
-    const distanceMuffling = clamp((voice.distance - mufflingStart) / Math.max(1, hearLimit - mufflingStart), 0, 1) * 0.75;
-    const muffling = this.muffling ? Math.min(1, distanceMuffling + (voice.hidden ? 0.55 : 0)) : 0;
-    const echo = voicedShouting ? echoForDistance(voice.distance, shoutRange) : { mix: 0, delay: 0.12 };
-    voice.high.frequency.setTargetAtTime(75 + muffling * 115, now, 0.3);
-    voice.low.frequency.setTargetAtTime(18000 - muffling * 16350, now, 0.3);
-    voice.dry.gain.setTargetAtTime(volume * (echo.mix > 0 ? 0.78 : 1), now, 0.3);
-    voice.wet.gain.setTargetAtTime(echo.mix, now, 0.35);
-    // The IR provides a diffuse two-second room tail; only its send level
-    // changes with range, avoiding a discrete delayed-repeat sound.
-  }
+    const fade = clamp((distance - fullVolumeRange) / Math.max(1, hearLimit - fullVolumeRange), 0, 1);
+    const volume = distance <= fullVolumeRange ? 1 : distance >= hearLimit ? 0 : (1 - fade) ** 2;
+    player.setVolume(volume);
+    player.stepVolume(performance.now());
 
-  private disposeVoice(voice: PlacedVoice): void {
-    voice.mediaElement?.pause();
-    if (voice.objectUrl) URL.revokeObjectURL(voice.objectUrl);
-    for (const oscillator of voice.oscillators) { try { oscillator.stop(); } catch { /* already stopped */ } }
-    for (const node of voice.extraNodes) { try { node.disconnect(); } catch { /* already disconnected */ } }
-    for (const node of [voice.sourceNode, voice.high, voice.low, voice.panner, voice.dry, voice.reverb, voice.wet]) {
-      try { node.disconnect(); } catch { /* already disconnected */ }
-    }
+    const hidden = this.muffling && this.hidden;
+    const muffling = this.muffling
+      ? Math.min(1, clamp((distance - (hidden ? 180 : 450)) / (hidden ? 1120 : 1380), 0, 1) * 0.84 + (hidden ? 0.64 : 0))
+      : 0;
+    const direction = this.directionListener ?? listener;
+    const panDx = source.x - direction.x;
+    const panDy = source.y - direction.y;
+    const panLength = Math.max(1, Math.hypot(panDx, panDy));
+    const echo = shouting ? echoForDistance(distance, shoutRange) : { mix: 0, delay: 0.12 };
+    player.setVoiceEffects({
+      muffling,
+      panX: this.stereo ? clamp(panDx / panLength, -1, 1) : 0,
+      panZ: this.stereo ? clamp(-panDy / panLength, -1, 1) : -0.1,
+      spatial: this.stereo,
+      echoMix: echo.mix,
+      echoDelay: echo.delay,
+    });
   }
 }

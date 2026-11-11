@@ -205,3 +205,8 @@ IMPLEMENTED IN v0.9.4
 - Added a peer count + legacy/protocol label on every signaling room snapshot for easier diagnosis of mismatched automatic rooms vs failed WebRTC.
 - On-device Nov 10 debug archives contained repeated volume request AbortErrors and no peer-discovery or WebRTC entries in those captured sessions. A direct health check and volume request to the configured default host completed during review. This does not establish what happens in a two-client match, so multiplayer playback remains unverified.
 - `npm run build` and `npx tauri build --no-bundle` passed for v0.9.4; no automated tests run. The build is staged in Finished Builds/v0.9.4 and its hashes are recorded in BUILD.txt.
+IMPLEMENTED IN v0.9.5
+- Reworked Voice Lab into a simulated second participant: the recorded sample (or fallback test tone) is sent across a local, serverless WebRTC loopback, received by the production PeerConnection, and rendered through the same incoming effects/playback graph used by room peers.
+- The simulated participant stays fixed where it was clicked on the detected minimap. Listener position updates keep its proximity gain, muffling, reverb, and HRTF direction changing live. Hidden-player toggle now affects the live virtual peer.
+- Selected Windows output device is applied to the simulated peer. Explicitly documented that the loopback verifies local WebRTC media and receive playback, but does not verify App Audio native routing, room discovery, server signaling, TURN, or internet connectivity.
+- `npm run build` passed. No automated tests or live multiplayer test were run.

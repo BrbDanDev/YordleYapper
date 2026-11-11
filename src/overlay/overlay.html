@@ -158,8 +158,8 @@
         <summary data-i18n="settings.maintenanceGroup">Diagnostics and updates</summary>
         <div class="setting-row"><label data-i18n="settings.debug">Diagnostic mode</label><button id="btn-debug" class="toggle-btn">OFF</button></div>
         <section id="voice-debug" class="voice-debug hidden" aria-label="Voice diagnostics simulator">
-          <strong>Voice lab · local only</strong>
-          <p class="setting-hint">Local audio simulation only. Click a map location to play the single test speaker relative to your champion or camera.</p>
+          <strong>Voice lab · simulated second player</strong>
+          <p class="setting-hint">The selected map point is a second local WebRTC player. Your recording crosses a real local WebRTC connection, then uses the normal browser-side incoming peer playback and effects path. This checks local send/receive audio; it does not test App Audio's native route, the room server, or internet connection.</p>
           <div class="voice-map-wrap"><img id="debug-filter-thumb" class="hidden voice-map" alt="Click the detected minimap to place a local test speaker"><span id="voice-sim-marker" class="voice-map-marker hidden" aria-hidden="true"></span></div>
           <p id="voice-sim-placement" class="setting-hint" aria-live="polite">Start the sound check, then click a location on the map.</p>
           <div class="setting-row"><label id="voice-sim-loudness-title" for="voice-sim-loudness">Simulated voice loudness</label><div class="setting-value-group"><input id="voice-sim-loudness" type="range" min="0" max="100" value="40"><span id="voice-sim-loudness-label" class="setting-value-label">40</span></div></div>
@@ -169,8 +169,8 @@
           <div class="setting-row"><label for="voice-sim-stereo">HRTF stereo</label><button id="voice-sim-stereo" class="toggle-btn active" aria-pressed="true">ON</button></div>
           <div class="room-actions"><button id="voice-sim-start" class="secondary-btn">ENABLE LOCAL AUDIO</button></div>
           <div class="room-actions"><button id="voice-sim-record" class="secondary-btn">RECORD TEST VOICE</button><button id="voice-sim-clear-recording" class="secondary-btn" disabled>CLEAR RECORDING</button></div>
-          <p class="setting-hint">Recording is kept in memory and played locally. The app temporarily mutes your live room mic while recording, then restores its previous state.</p>
-          <p id="voice-sim-status" class="setting-hint" aria-live="polite">Ready. Click the map to play one local test voice.</p>
+          <p class="setting-hint">The recording stays in memory. Your live room mic is temporarily muted while recording, then restored.</p>
+          <p id="voice-sim-status" class="setting-hint" aria-live="polite">Ready. Enable audio, record a voice, then click the map to place the simulated second player.</p>
         </section>
         <div class="setting-row"><label data-i18n="settings.debugLogs">Diagnostic files</label><button id="btn-open-logs" class="secondary-btn" data-i18n="settings.open">OPEN</button></div>
         <div class="setting-row"><label data-i18n="settings.autoUpdate">Check for updates automatically</label><button id="btn-autoupdate" class="toggle-btn">OFF</button></div>

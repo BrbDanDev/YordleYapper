@@ -202,20 +202,21 @@ voiceSimStereo.addEventListener('click', () => {
 voiceSimHidden.addEventListener('click', () => {
   const enabled = voiceSimHidden.getAttribute('aria-pressed') !== 'true';
   setVoiceSimToggle(voiceSimHidden, enabled);
+  voiceSimulator.setHidden(enabled);
 });
 voiceSimStart.addEventListener('click', async () => {
   if (voiceSimulator.isRunning) {
     stopVoiceRecording();
     await voiceSimulator.stop();
     voiceSimStart.textContent = 'ENABLE LOCAL AUDIO';
-    voiceSimStatus.textContent = 'Audio stopped. Click the map to start one test voice.';
+    voiceSimStatus.textContent = 'Local second player disconnected.';
     return;
   }
   voiceSimStart.disabled = true;
   try {
     await voiceSimulator.start();
     voiceSimStart.textContent = 'STOP LOCAL AUDIO';
-    voiceSimStatus.textContent = 'Audio ready; silent until you click the map.';
+    voiceSimStatus.textContent = 'Second player connected through local WebRTC; click the map to test the receive and effects path.';
   } catch (error) {
     voiceSimStatus.textContent = 'Audio could not start: ' + String(error);
     await voiceSimulator.stop();
@@ -288,7 +289,7 @@ voiceSimRecord.addEventListener('click', async () => {
       voiceSimulator.setRecording(sample, measuredRmsLevel);
       updateVoiceSimReadout();
       voiceSimClearRecording.disabled = false;
-      voiceSimStatus.textContent = `Voice saved in memory · measured loudness ${Math.round(measuredRmsLevel * 100)}%. Click the map to replay it through local effects.`;
+      voiceSimStatus.textContent = `Voice saved in memory · measured loudness ${Math.round(measuredRmsLevel * 100)}%. It will send through the simulated player's WebRTC connection.`;
     };
     recorder.start();
     voiceSimRecord.disabled = false;
@@ -305,7 +306,7 @@ voiceSimClearRecording.addEventListener('click', () => {
   voiceSimulator.clearRecording();
   updateVoiceSimReadout();
   voiceSimClearRecording.disabled = true;
-  voiceSimStatus.textContent = 'Recording cleared. The map speaker will use the default synthetic test tone.';
+  voiceSimStatus.textContent = 'Recording cleared. The simulated player will use the synthetic test tone.';
 });
 
 // Every toggle shows ON/OFF in the panel language.
@@ -1111,7 +1112,7 @@ function updateVoiceSimPlacement(state: OverlayState): void {
     : shouting && distance > voiceSimulator.currentShoutingRange ? 'reverb enabled' : 'no reverb';
   const anchor = mode === 'camera' && state.cameraPosition ? 'camera' : 'champion';
   const direction = mode === 'rift' && getRiftStereoFromCamera() && state.cameraPosition ? ', stereo follows camera' : '';
-  voiceSimPlacement.textContent = `One speaker: ${distance}u from ${anchor}, loudness ${Math.round(loudness * 100)}%${direction}, ${sound}.`;
+  voiceSimPlacement.textContent = `Second player: ${distance}u from ${anchor}, voice level ${Math.round(loudness * 100)}%${direction}, ${sound}.`;
 }
 
 listen<{ filteredImageUrl: string | null; debugEnabled: boolean }>('scanner:scene', (event) => {
@@ -1148,13 +1149,13 @@ debugFilterThumb.addEventListener('click', async (event) => {
     if (!voiceSimulator.isRunning) {
       await voiceSimulator.start();
       voiceSimStart.textContent = 'STOP LOCAL AUDIO';
-      voiceSimStatus.textContent = 'Local audio ready; one speaker placed from the map.';
+      voiceSimStatus.textContent = 'Second player connected through local WebRTC.';
     }
     const hidden = voiceSimHidden.getAttribute('aria-pressed') === 'true';
     const directionListener = hearingMode === 'camera' || (hearingMode === 'rift' && getRiftStereoFromCamera())
       ? lastState.cameraPosition ?? listener
       : listener;
-    voiceSimulator.placeSpeaker(source, listener, hidden, directionListener);
+    await voiceSimulator.placeSpeaker(source, listener, hidden, directionListener);
     voiceSimMarker.style.left = (xFraction * 100) + '%';
     voiceSimMarker.style.top = (yFraction * 100) + '%';
     voiceSimMarker.classList.remove('hidden');

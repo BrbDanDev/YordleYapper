@@ -223,6 +223,64 @@ export class PeerConnection {
     return new PeerConnection(remoteName, iceServers, policy);
   }
 
+  /**
+   * Create a local WebRTC loopback that behaves like a second voice-chat
+   * participant. The sender is local, but the recorded audio still crosses an
+   * actual RTCPeerConnection and enters this class through its normal ontrack,
+   * effects, gain, autoplay, and playback path. No signaling server is used.
+   */
+  static async createLocalTest(remoteName: string, outgoing: MediaStream): Promise<{ peer: PeerConnection; closeSender: () => void }> {
+    const peer = new PeerConnection(remoteName, [], 'all');
+    const sender = new RTCPeerConnection({ iceServers: [] });
+    sender.ontrack = (event) => {
+      console.log('[Voice Lab] Loopback received remote test track:', event.track.kind);
+      peer.remoteStream.addTrack(event.track);
+      if (peer.appOut) peer.attachAppTap();
+      else peer.attachEffectsGraph();
+      peer.tryPlay();
+      void peer.applySinkId();
+    };
+    try {
+      for (const track of outgoing.getAudioTracks()) sender.addTrack(track, outgoing);
+      const offer = await sender.createOffer();
+      await sender.setLocalDescription(offer);
+      await PeerConnection.waitForIceGathering(sender);
+      await peer.handleOffer(sender.localDescription!);
+      await PeerConnection.waitForIceGathering(peer.pc);
+      await sender.setRemoteDescription(peer.pc.localDescription!);
+      await new Promise<void>((resolve, reject) => {
+        if (sender.connectionState === 'connected') { resolve(); return; }
+        const timeout = window.setTimeout(() => reject(new Error('Local WebRTC voice test did not connect.')), 5000);
+        const changed = (): void => {
+          if (sender.connectionState === 'connected') { window.clearTimeout(timeout); resolve(); }
+          else if (sender.connectionState === 'failed') { window.clearTimeout(timeout); reject(new Error('Local WebRTC voice test failed to connect.')); }
+        };
+        sender.addEventListener('connectionstatechange', changed);
+        changed();
+      });
+      console.log('[Voice Lab] Local second-player WebRTC connection established');
+      return { peer, closeSender: () => sender.close() };
+    } catch (error) {
+      sender.close();
+      peer.close();
+      throw error;
+    }
+  }
+
+  private static waitForIceGathering(pc: RTCPeerConnection): Promise<void> {
+    if (pc.iceGatheringState === 'complete') return Promise.resolve();
+    return new Promise((resolve) => {
+      const timeout = window.setTimeout(done, 2500);
+      function done(): void {
+        window.clearTimeout(timeout);
+        pc.removeEventListener('icegatheringstatechange', changed);
+        resolve();
+      }
+      function changed(): void { if (pc.iceGatheringState === 'complete') done(); }
+      pc.addEventListener('icegatheringstatechange', changed);
+    });
+  }
+
   /** Route this peer's audio to the chosen output device via the element sink. */
   async setOutputDevice(deviceId: string | null): Promise<void> {
     this.desiredSinkId = deviceId;
