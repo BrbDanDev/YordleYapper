@@ -4,6 +4,12 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ## [Unreleased]
 
+## [v0.9.8] - 2026-11-11
+
+### Fixed
+- Keep the reverb return audible deeper into the proximity fade by applying proximity gain separately to dry voice and wet reverb. The reverb now fades with a square-root curve, so distance no longer suppresses it as quickly as the voice.
+- Hold the reverb return briefly when a shout/effect level drops, letting the room tail ring out instead of being cut off by the next effect update. Applied to both browser and App Audio playback.
+
 ## [v0.9.7] - 2026-11-11
 
 ### Fixed

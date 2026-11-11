@@ -1899,7 +1899,7 @@ export class Orchestrator {
         ? Math.max(0, Math.min(1,
           (effectiveDistance - shoutRange) / Math.max(1, SHOUT_REVERB_MAX_DISTANCE - shoutRange)))
         : 0;
-      const shoutReverb = shoutStrength > 0 && beyondShout > 0
+      const shoutReverb = mode === 'rift' && shoutStrength > 0 && beyondShout > 0
         ? shoutStrength * (0.06 + beyondShout * 0.48)
         : 0;
       const chaosReverb = this.chaosActive.has('longrange') && effectiveDistance > 1000

@@ -34,7 +34,10 @@ interface TapState {
   panZ: number;
   spatial: boolean;
   echoMix: number;
+  targetEchoMix: number;
   echoDelay: number;
+  reverbTailUntil: number;
+  reverbHoldTimer: number | null;
   chaosHighpass: number;
   chaosBandpass: number;
   nodes: { src: MediaStreamAudioSourceNode; hi: BiquadFilterNode; lo: BiquadFilterNode; pan: PannerNode; g: GainNode; wet: GainNode; reverb: ConvolverNode; send: GainNode; mix: GainNode } | null;
@@ -153,7 +156,7 @@ export class AppAudioOutput {
   /** A peer's voice into the mix, silent until setGain. Works for a stream
    *  that already has its audio track. */
   attach(stream: MediaStream): AppTap {
-    const tap: TapState = { stream, gain: 0, muffling: 0, panX: 0, panZ: -0.1, spatial: true, echoMix: 0, echoDelay: 0.12, chaosHighpass: 0, chaosBandpass: 0, nodes: null };
+    const tap: TapState = { stream, gain: 0, muffling: 0, panX: 0, panZ: -0.1, spatial: true, echoMix: 0, targetEchoMix: 0, echoDelay: 0.12, chaosHighpass: 0, chaosBandpass: 0, reverbTailUntil: 0, reverbHoldTimer: null, nodes: null };
     this.taps.add(tap);
     this.connectTap(tap);
     return {
@@ -162,15 +165,34 @@ export class AppAudioOutput {
         if (tap.nodes && this.ctx) {
           const now = this.ctx.currentTime;
           tap.nodes.g.gain.setTargetAtTime(value * (1 - tap.echoMix * 0.18), now, 0.02);
-          tap.nodes.wet.gain.setTargetAtTime(reverbTail ? Math.max(tap.echoMix * 0.9, 0.28) : value * tap.echoMix * 0.9, now, 0.02);
-          if (reverbTail) window.setTimeout(() => {
-            if (tap.nodes && this.ctx) tap.nodes.wet.gain.setTargetAtTime(tap.gain * tap.echoMix * 0.9, this.ctx.currentTime, 0.12);
-          }, 2200);
+          if (reverbTail) {
+            tap.reverbTailUntil = performance.now() + 2200;
+            tap.nodes.wet.gain.setTargetAtTime(Math.max(tap.echoMix * 0.9, 0.28), now, 0.02);
+            window.setTimeout(() => {
+              tap.reverbTailUntil = 0;
+              if (tap.nodes && this.ctx) tap.nodes.wet.gain.setTargetAtTime(Math.sqrt(tap.gain) * tap.echoMix * 0.9, this.ctx.currentTime, 0.12);
+            }, 2200);
+          } else if (performance.now() >= tap.reverbTailUntil) {
+            tap.nodes.wet.gain.setTargetAtTime(Math.sqrt(value) * tap.echoMix * 0.9, now, 0.02);
+          }
         }
       },
       setVoiceEffects: (options) => {
         tap.muffling = options.muffling; tap.panX = options.panX; tap.panZ = options.panZ; tap.spatial = options.spatial;
-        tap.echoMix = Math.max(0, Math.min(0.8, options.echoMix ?? 0));
+        const requestedEchoMix = Math.max(0, Math.min(0.8, options.echoMix ?? 0));
+        tap.targetEchoMix = requestedEchoMix;
+        if (requestedEchoMix < tap.echoMix) {
+          if (tap.reverbHoldTimer !== null) window.clearTimeout(tap.reverbHoldTimer);
+          tap.reverbHoldTimer = window.setTimeout(() => {
+            tap.reverbHoldTimer = null;
+            tap.echoMix = tap.targetEchoMix;
+            this.applyTapEffects(tap);
+          }, 450);
+        } else {
+          if (tap.reverbHoldTimer !== null) window.clearTimeout(tap.reverbHoldTimer);
+          tap.reverbHoldTimer = null;
+          tap.echoMix = requestedEchoMix;
+        }
         tap.echoDelay = Math.max(0.12, Math.min(2, options.echoDelay ?? 0.12));
         tap.chaosHighpass = options.chaosHighpass ?? 0;
         tap.chaosBandpass = options.chaosBandpass ?? 0;
@@ -199,6 +221,8 @@ export class AppAudioOutput {
   // ---- internals ----
 
   private disposeTap(tap: TapState): void {
+    if (tap.reverbHoldTimer !== null) window.clearTimeout(tap.reverbHoldTimer);
+    tap.reverbHoldTimer = null;
     const nodes = tap.nodes;
     if (!nodes) return;
     nodes.src.disconnect(); nodes.hi.disconnect(); nodes.lo.disconnect(); nodes.pan.disconnect();
@@ -234,7 +258,7 @@ export class AppAudioOutput {
     tap.nodes.pan.positionY.setTargetAtTime(0, now, 0.12);
     tap.nodes.pan.positionZ.setTargetAtTime(tap.spatial ? Math.max(-1, Math.min(1, tap.panZ)) : -0.1, now, 0.12);
     tap.nodes.g.gain.setTargetAtTime(tap.gain * (1 - tap.echoMix * 0.18), now, 0.16);
-    tap.nodes.wet.gain.setTargetAtTime(tap.gain * tap.echoMix * 0.9, now, 0.2);
+    if (performance.now() >= tap.reverbTailUntil) tap.nodes.wet.gain.setTargetAtTime(Math.sqrt(tap.gain) * tap.echoMix * 0.9, now, 0.2);
   }
 
   /** (Re)builds the silent mixing graph at `sampleRate`, the device's. */

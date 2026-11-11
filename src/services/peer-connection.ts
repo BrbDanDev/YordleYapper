@@ -95,7 +95,6 @@ export class PeerConnection {
   private processedElement: HTMLAudioElement;
   private effectSource: MediaStreamAudioSourceNode | null = null;
   private effectContext: AudioContext | null = null;
-  private effectGain: GainNode | null = null;
   private lowPass: BiquadFilterNode | null = null;
   private highPass: BiquadFilterNode | null = null;
   private panner: PannerNode | null = null;
@@ -105,6 +104,8 @@ export class PeerConnection {
   private reverb: ConvolverNode | null = null;
   private voiceReverbMix = 0;
   private reverbTailTimer: number | null = null;
+  private reverbHoldTimer: number | null = null;
+  private pendingReverbMix = 0;
   private audioDestination: MediaStreamAudioDestinationNode | null = null;
   private effectsGraphFailed = false;
   // Output device the user picked, and the one actually in effect on the
@@ -317,8 +318,15 @@ export class PeerConnection {
       this.appTap?.setGain(this.muted ? 0 : v);
       return;
     }
-    if (this.effectGain && this.effectContext) {
-      this.effectGain.gain.setTargetAtTime(v, this.effectContext.currentTime, 0.025);
+    if (this.dryGain && this.effectContext) {
+      const now = this.effectContext.currentTime;
+      this.dryGain.gain.setTargetAtTime(v * (1 - this.voiceReverbMix * 0.2), now, 0.025);
+      // Keep the reverb audible deeper into the proximity fade. Applying the
+      // full voice gain before the dry/wet split made distant reverb vanish
+      // exactly when it should become more apparent.
+      if (this.reverbTailTimer === null) {
+        this.reverbGain?.gain.setTargetAtTime(Math.sqrt(v) * this.voiceReverbMix, now, 0.08);
+      }
     } else if (this.effectsGraphFailed) {
       this.audioElement.volume = v;
     } else {
@@ -348,9 +356,8 @@ export class PeerConnection {
       const reverb = ctx.createConvolver(); reverb.buffer = makeRoomImpulse(ctx);
       const reverbGain = ctx.createGain(); reverbGain.gain.value = 0;
       const mix = ctx.createGain();
-      const gain = ctx.createGain(); gain.gain.value = this.smoothedVolume ?? this.targetVolume;
       const destination = ctx.createMediaStreamDestination();
-      source.connect(highPass).connect(gain).connect(lowPass).connect(panner);
+      source.connect(highPass).connect(lowPass).connect(panner);
       panner.connect(dry).connect(mix);
       panner.connect(reverbSend).connect(reverb).connect(reverbGain).connect(mix);
       mix.connect(destination);
@@ -364,8 +371,8 @@ export class PeerConnection {
       this.reverbSend = reverbSend;
       this.reverbGain = reverbGain;
       this.reverb = reverb;
-      this.effectGain = gain;
       this.audioDestination = destination;
+      this.applyGain(this.smoothedVolume ?? this.targetVolume);
       if (ctx.state === 'suspended') {
         void ctx.resume().catch(() => undefined);
         const resume = (): void => {
@@ -404,9 +411,26 @@ export class PeerConnection {
       this.panner.positionY.setTargetAtTime(0, now, 0.12);
       this.panner.positionZ.setTargetAtTime(options.spatial ? panZ : -0.1, now, 0.12);
       const mix = Math.max(0, Math.min(0.8, options.echoMix ?? 0));
-      this.voiceReverbMix = mix * 0.9;
-      this.dryGain?.gain.setTargetAtTime(1 - mix * 0.18, now, 0.32);
-      if (this.reverbTailTimer === null) this.reverbGain?.gain.setTargetAtTime(this.voiceReverbMix, now, 0.38);
+      const requestedReverbMix = mix * 0.9;
+      if (requestedReverbMix < this.voiceReverbMix) {
+        this.pendingReverbMix = requestedReverbMix;
+        if (this.reverbHoldTimer !== null) window.clearTimeout(this.reverbHoldTimer);
+        this.reverbHoldTimer = window.setTimeout(() => {
+          this.reverbHoldTimer = null;
+          this.voiceReverbMix = this.pendingReverbMix;
+          if (this.reverbTailTimer === null && this.effectContext && this.reverbGain) {
+            const volume = this.smoothedVolume ?? this.targetVolume;
+            this.reverbGain.gain.setTargetAtTime(Math.sqrt(volume) * this.voiceReverbMix, this.effectContext.currentTime, 0.6);
+          }
+        }, 450);
+      } else {
+        if (this.reverbHoldTimer !== null) window.clearTimeout(this.reverbHoldTimer);
+        this.reverbHoldTimer = null;
+        this.voiceReverbMix = requestedReverbMix;
+      }
+      const volume = this.smoothedVolume ?? this.targetVolume;
+      this.dryGain?.gain.setTargetAtTime(volume * (1 - this.voiceReverbMix * 0.2), now, 0.32);
+      if (this.reverbTailTimer === null) this.reverbGain?.gain.setTargetAtTime(Math.sqrt(volume) * this.voiceReverbMix, now, 0.32);
     }
     this.appTap?.setVoiceEffects({ muffling: options.muffling, panX, panZ, spatial: options.spatial, echoMix: options.echoMix, echoDelay: options.echoDelay, chaosHighpass: options.chaosHighpass, chaosBandpass: options.chaosBandpass });
   }
@@ -585,7 +609,10 @@ export class PeerConnection {
     if (this.reverbTailTimer !== null) window.clearTimeout(this.reverbTailTimer);
     this.reverbTailTimer = window.setTimeout(() => {
       this.reverbTailTimer = null;
-      if (this.effectContext && this.reverbGain) this.reverbGain.gain.setTargetAtTime(this.voiceReverbMix, this.effectContext.currentTime, 0.12);
+      if (this.effectContext && this.reverbGain) {
+        const volume = this.smoothedVolume ?? this.targetVolume;
+        this.reverbGain.gain.setTargetAtTime(Math.sqrt(volume) * this.voiceReverbMix, this.effectContext.currentTime, 0.12);
+      }
     }, 2200);
   }
 
@@ -674,9 +701,10 @@ export class PeerConnection {
   private disposeEffectsGraph(): void {
     if (this.reverbTailTimer !== null) window.clearTimeout(this.reverbTailTimer);
     this.reverbTailTimer = null;
+    if (this.reverbHoldTimer !== null) window.clearTimeout(this.reverbHoldTimer);
+    this.reverbHoldTimer = null;
     this.effectSource?.disconnect();
     this.highPass?.disconnect();
-    this.effectGain?.disconnect();
     this.lowPass?.disconnect();
     this.panner?.disconnect();
     this.dryGain?.disconnect();
@@ -691,7 +719,6 @@ export class PeerConnection {
     void context?.close().catch(() => undefined);
     this.effectSource = null;
     this.highPass = null;
-    this.effectGain = null;
     this.lowPass = null;
     this.panner = null;
     this.dryGain = null;
