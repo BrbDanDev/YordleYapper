@@ -174,14 +174,20 @@ jobs:
           EXE: ${{ steps.artifact.outputs.exe_path }}
           SERVER_EXE: ${{ steps.artifact.outputs.server_path }}
         run: |
-          $asset = "$($env:EXE)#YordleYapper.exe"
-          $legacyAsset = "$($env:EXE)#lolproxchat.exe"
-          $serverAsset = "$($env:SERVER_EXE)#YordleYapperServer.exe"
+          $clientAsset = Join-Path $env:RUNNER_TEMP 'YordleYapper.exe'
+          Copy-Item -LiteralPath $env:EXE -Destination $clientAsset -Force
           gh release view $env:TAG 2>$null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:TAG $asset $legacyAsset $serverAsset --clobber
-            gh release edit   $env:TAG --notes-file RELEASE_NOTES.md
+            $releaseExists = $true
           } else {
-            gh release create $env:TAG $asset $legacyAsset $serverAsset --draft --title $env:TAG --notes-file RELEASE_NOTES.md --target $env:GITHUB_SHA
+            $releaseExists = $false
           }
+          if (-not $releaseExists) {
+            gh release create $env:TAG --draft --title $env:TAG --notes-file RELEASE_NOTES.md --target $env:GITHUB_SHA
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create the draft release.' }
+          }
+          gh release upload $env:TAG $clientAsset $env:SERVER_EXE --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Could not upload the release assets.' }
+          gh release edit $env:TAG --notes-file RELEASE_NOTES.md
+          if ($LASTEXITCODE -ne 0) { throw 'Could not update the release notes.' }
           Write-Host "Draft release ready for $($env:TAG) — review and publish it in the Releases tab."
