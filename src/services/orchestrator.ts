@@ -143,6 +143,13 @@ const SHARED_RESET_NOTICE_MS = 4_000;
  * (LOST_ALLY_ANCHOR_MS in server/src/volumes.ts).
  */
 export const LOST_ALLY_ANCHOR_MS = 20_000;
+// WebRTC audioLevel is linear (0..1). Ordinary speech is commonly around
+// 0.02; reverb starts only once a voice is clearly raised above that.
+const SHOUT_AUDIO_LEVEL = 0.12;
+const MAX_SHOUT_AUDIO_LEVEL = 0.36;
+const SHOUT_RANGE_MIN = 2300;
+const SHOUT_RANGE_MAX = 2600;
+const SHOUT_REVERB_MAX_DISTANCE = 3600;
 
 export class Orchestrator {
   private readonly deps: OrchestratorDeps;
@@ -1882,10 +1889,23 @@ export class Orchestrator {
       const hiddenMuffling = hiddenEnemy ? 0.64 : 0;
       const mufflingAmount = Math.min(1, distanceMuffling + hiddenMuffling);
       const echo = peerEcho[name];
+      const voiceLevel = this.audio.getPeerVoiceLevel(name);
+      const shoutStrength = Math.max(0, Math.min(1,
+        (voiceLevel - SHOUT_AUDIO_LEVEL) / (MAX_SHOUT_AUDIO_LEVEL - SHOUT_AUDIO_LEVEL)));
+      const shoutRange = SHOUT_RANGE_MIN + shoutStrength * (SHOUT_RANGE_MAX - SHOUT_RANGE_MIN);
+      // A raised voice gains a smooth reverb tail only beyond its shout range.
+      // Playback calculates this locally, so it works with the legacy server.
+      const beyondShout = effectiveDistance > shoutRange
+        ? Math.max(0, Math.min(1,
+          (effectiveDistance - shoutRange) / Math.max(1, SHOUT_REVERB_MAX_DISTANCE - shoutRange)))
+        : 0;
+      const shoutReverb = shoutStrength > 0 && beyondShout > 0
+        ? shoutStrength * (0.06 + beyondShout * 0.48)
+        : 0;
       const chaosReverb = this.chaosActive.has('longrange') && effectiveDistance > 1000
         ? Math.min(0.42, 0.08 + (effectiveDistance - 1000) / 10000) : 0;
       const deadReverb = state.isDead ? 0.1 : 0;
-      effects[name] = { muffling: muffling ? mufflingAmount : 0, panX, panZ, spatial, echoMix: Math.max(echo?.mix ?? 0, chaosReverb, deadReverb), echoDelay: chaosReverb > 0 ? 0.22 + chaosReverb : (echo?.delay ?? (deadReverb ? 0.08 : 0.12)) };
+      effects[name] = { muffling: muffling ? mufflingAmount : 0, panX, panZ, spatial, echoMix: Math.max(shoutReverb, echo?.mix ?? 0, chaosReverb, deadReverb), echoDelay: chaosReverb > 0 ? 0.22 + chaosReverb : (echo?.delay ?? (deadReverb ? 0.08 : 0.12)) };
     }
     this.audio.applyPeerVoiceEffects(effects);
   }

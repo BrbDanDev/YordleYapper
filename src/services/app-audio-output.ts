@@ -72,7 +72,7 @@ function makeRoomImpulse(context: AudioContext): AudioBuffer {
       seed = (seed * 16807) % 2147483647;
       const noise = (seed / 1073741823.5) - 1;
       const time = i / context.sampleRate;
-      data[i] = noise * Math.exp(-time * (channel === 0 ? 3.0 : 3.35)) * (time < 0.12 ? 1 : 0.72) * 0.32;
+      data[i] = noise * Math.exp(-time * (channel === 0 ? 2.2 : 2.45)) * (time < 0.12 ? 1 : 0.72) * 0.42;
     }
   }
   return impulse;
@@ -161,16 +161,16 @@ export class AppAudioOutput {
         tap.gain = value;
         if (tap.nodes && this.ctx) {
           const now = this.ctx.currentTime;
-          tap.nodes.g.gain.setTargetAtTime(value * (1 - tap.echoMix * 0.25), now, 0.02);
-          tap.nodes.wet.gain.setTargetAtTime(reverbTail ? Math.max(tap.echoMix * 0.72, 0.28) : value * tap.echoMix * 0.72, now, 0.02);
+          tap.nodes.g.gain.setTargetAtTime(value * (1 - tap.echoMix * 0.18), now, 0.02);
+          tap.nodes.wet.gain.setTargetAtTime(reverbTail ? Math.max(tap.echoMix * 0.9, 0.28) : value * tap.echoMix * 0.9, now, 0.02);
           if (reverbTail) window.setTimeout(() => {
-            if (tap.nodes && this.ctx) tap.nodes.wet.gain.setTargetAtTime(tap.gain * tap.echoMix * 0.72, this.ctx.currentTime, 0.12);
+            if (tap.nodes && this.ctx) tap.nodes.wet.gain.setTargetAtTime(tap.gain * tap.echoMix * 0.9, this.ctx.currentTime, 0.12);
           }, 2200);
         }
       },
       setVoiceEffects: (options) => {
         tap.muffling = options.muffling; tap.panX = options.panX; tap.panZ = options.panZ; tap.spatial = options.spatial;
-        tap.echoMix = Math.max(0, Math.min(0.54, options.echoMix ?? 0));
+        tap.echoMix = Math.max(0, Math.min(0.8, options.echoMix ?? 0));
         tap.echoDelay = Math.max(0.12, Math.min(2, options.echoDelay ?? 0.12));
         tap.chaosHighpass = options.chaosHighpass ?? 0;
         tap.chaosBandpass = options.chaosBandpass ?? 0;
@@ -217,7 +217,7 @@ export class AppAudioOutput {
     const send = this.ctx.createGain(); send.gain.value = 1;
     const reverb = this.ctx.createConvolver(); reverb.buffer = makeRoomImpulse(this.ctx);
     const mix = this.ctx.createGain();
-    g.gain.value = tap.gain * (1 - tap.echoMix * 0.25); wet.gain.value = tap.gain * tap.echoMix * 0.72;
+    g.gain.value = tap.gain * (1 - tap.echoMix * 0.18); wet.gain.value = tap.gain * tap.echoMix * 0.9;
     src.connect(hi).connect(lo).connect(pan);
     pan.connect(g).connect(mix); pan.connect(send).connect(reverb).connect(wet).connect(mix);
     mix.connect(this.mixer);
@@ -233,8 +233,8 @@ export class AppAudioOutput {
     tap.nodes.pan.positionX.setTargetAtTime(tap.spatial ? Math.max(-1, Math.min(1, tap.panX)) : 0, now, 0.12);
     tap.nodes.pan.positionY.setTargetAtTime(0, now, 0.12);
     tap.nodes.pan.positionZ.setTargetAtTime(tap.spatial ? Math.max(-1, Math.min(1, tap.panZ)) : -0.1, now, 0.12);
-    tap.nodes.g.gain.setTargetAtTime(tap.gain * (1 - tap.echoMix * 0.25), now, 0.16);
-    tap.nodes.wet.gain.setTargetAtTime(tap.gain * tap.echoMix * 0.72, now, 0.2);
+    tap.nodes.g.gain.setTargetAtTime(tap.gain * (1 - tap.echoMix * 0.18), now, 0.16);
+    tap.nodes.wet.gain.setTargetAtTime(tap.gain * tap.echoMix * 0.9, now, 0.2);
   }
 
   /** (Re)builds the silent mixing graph at `sampleRate`, the device's. */

@@ -4,6 +4,12 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ## [Unreleased]
 
+## [v0.9.7] - 2026-11-11
+
+### Fixed
+- Restore audible reverb for clearly raised voices beyond their loudness-based shout range in live matches. Reverb is derived locally from each received voice level and champion distance, so it works with the existing server build.
+- Make reverb more noticeable while preserving smooth wet/dry transitions, and use the same longer, stronger room response for browser playback and App Audio.
+
 - Use `YordleYapper.exe` as the branded Windows download name while retaining the `lolproxchat.exe` compatibility asset for existing updaters.
 
 ## [v0.9.6] - 2026-11-10

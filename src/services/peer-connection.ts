@@ -60,9 +60,9 @@ function makeRoomImpulse(context: AudioContext): AudioBuffer {
       seed = (seed * 16807) % 2147483647;
       const noise = (seed / 1073741823.5) - 1;
       const time = i / context.sampleRate;
-      const decay = Math.exp(-time * (channel === 0 ? 3.0 : 3.35));
+      const decay = Math.exp(-time * (channel === 0 ? 2.2 : 2.45));
       const early = time < 0.12 ? 1.0 : 0.72;
-      data[i] = noise * decay * early * 0.32;
+      data[i] = noise * decay * early * 0.42;
     }
   }
   return impulse;
@@ -403,9 +403,9 @@ export class PeerConnection {
       this.panner.positionX.setTargetAtTime(options.spatial ? panX : 0, now, 0.12);
       this.panner.positionY.setTargetAtTime(0, now, 0.12);
       this.panner.positionZ.setTargetAtTime(options.spatial ? panZ : -0.1, now, 0.12);
-      const mix = Math.max(0, Math.min(0.54, options.echoMix ?? 0));
-      this.voiceReverbMix = mix * 0.72;
-      this.dryGain?.gain.setTargetAtTime(1 - mix * 0.25, now, 0.32);
+      const mix = Math.max(0, Math.min(0.8, options.echoMix ?? 0));
+      this.voiceReverbMix = mix * 0.9;
+      this.dryGain?.gain.setTargetAtTime(1 - mix * 0.18, now, 0.32);
       if (this.reverbTailTimer === null) this.reverbGain?.gain.setTargetAtTime(this.voiceReverbMix, now, 0.38);
     }
     this.appTap?.setVoiceEffects({ muffling: options.muffling, panX, panZ, spatial: options.spatial, echoMix: options.echoMix, echoDelay: options.echoDelay, chaosHighpass: options.chaosHighpass, chaosBandpass: options.chaosBandpass });

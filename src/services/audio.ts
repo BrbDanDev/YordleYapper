@@ -795,6 +795,11 @@ export class AudioService {
     return out;
   }
 
+  /** Current WebRTC input level for one peer, before local proximity gain. */
+  getPeerVoiceLevel(name: string): number {
+    return this.peers.get(name)?.getAudioLevel?.() ?? 0;
+  }
+
   private ownLevelBuf: Float32Array<ArrayBuffer> | null = null;
 
   /** Our microphone's level (RMS, 0..1) while it is actually being sent, else 0. */
