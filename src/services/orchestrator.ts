@@ -199,6 +199,9 @@ export class Orchestrator {
   private lastCameraStatusMs = 0;
   private gameStatePollId: number | null = null;
   private positionTickRunning = false;
+  /** Volume HTTP requests must never hold the position/overlay loop open. */
+  private volumeRequestRunning = false;
+  private lastVolumeRequestAt = 0;
   private sessionActive = false;
   private lastOverlayRepositionTime = 0;
   private lastOverlayBounds: { x: number; y: number; w: number; h: number } | null = null;
@@ -576,7 +579,7 @@ export class Orchestrator {
       (peer) => this.handlePeerPosition(peer),
       (signal) => this.handleSignal(signal),
       (name) => this.handlePeerLeave(name),
-      (name) => this.handleReplayPeerJoined(name),
+      (name) => this.handlePeerJoined(name),
       (state) => this.handleRoomState(state),
     );
 
@@ -900,7 +903,7 @@ export class Orchestrator {
       // written it off. No-op before the first lock, when there is nothing to
       // disown.
       this.disownCoords();
-      await this.applyLostVolumes();
+      void this.applyLostVolumes();
       this.broadcastOverlayState();
       return;
     }
@@ -912,7 +915,7 @@ export class Orchestrator {
       // server still holds for our teammates is withdrawn. No-op before the
       // first lock.
       this.disownCoords();
-      await this.applyLostVolumes();
+      void this.applyLostVolumes();
       this.broadcastOverlayState();
       return;
     }
@@ -942,7 +945,7 @@ export class Orchestrator {
       // used to freeze every peer at whatever gain they last had, so after a
       // recall a player went on hearing everyone they could hear from the lane
       // they had just left, for as long as the tracker stayed lost.
-      await this.applyLostVolumes();
+      void this.applyLostVolumes();
       this.broadcastOverlayState();
       return;
     }
@@ -994,23 +997,51 @@ export class Orchestrator {
 
     this.tickReplayRecording(position);
 
+    void this.computeAndApplyPeerVolumes(
+      position, mode, visibilityFilter, hostOptions?.spatial === 'on', hostOptions?.spatial === 'off',
+    );
+
+    this.broadcastOverlayState();
+  }
+
+  /** Keep position reports flowing even when the hosted volume API is slow. */
+  private async computeAndApplyPeerVolumes(
+    position: Position,
+    mode: ListeningMode,
+    visibilityFilter: boolean,
+    hostSpatialOn: boolean,
+    hostSpatialOff: boolean,
+  ): Promise<void> {
+    const client = this.volumeClient;
+    const audio = this.audio;
+    const session = this.session;
+    if (!client || !audio || !session || this.volumeRequestRunning) return;
+    const now = performance.now();
+    // Legacy hosted servers limit requests per IP. Keeping clients near 3 Hz
+    // stays under the old 15 req/s cap for four friends sharing a NAT, while
+    // position reports continue independently at 10 Hz.
+    if (now - this.lastVolumeRequestAt < 350) return;
+    this.lastVolumeRequestAt = now;
+    this.volumeRequestRunning = true;
     try {
-      const result = await this.volumeClient.computeVolumes(
+      const result = await client.computeVolumes(
         position,
-        this.session.roomId,
+        session.roomId,
         this.localSummonerName,
         getAllyProximity(),
         false,
         mode === 'rift',
         mode === 'rift' && getRiftStereoFromCamera() &&
-          (hostOptions?.spatial === 'on' || (hostOptions?.spatial !== 'off' && getSpatialAudio())),
+          (hostSpatialOn || (!hostSpatialOff && getSpatialAudio())),
         this.effectiveDeadVoiceMode(),
       );
+      // Ignore late results from a match that ended or switched sessions.
+      if (this.session !== session || this.audio !== audio) return;
       const peerVolumes = { ...result.peerVolumes };
-      if (!cameraOnly && visibilityFilter && this.cameraHearing?.hasPlayers()) {
+      if (mode !== 'camera' && visibilityFilter && this.cameraHearing?.hasPlayers()) {
         const visible = this.cameraHearing.visibleEnemies(performance.now());
         for (const [name, state] of this.peerStates) {
-          if (state.team === this.session.localPlayer.team) continue;
+          if (state.team === session.localPlayer.team) continue;
           const id = this.cameraIdFor(name);
           if (id && !visible.has(id)) {
             // Rift Voices leaves the voice audible and uses its low/high-pass
@@ -1020,13 +1051,20 @@ export class Orchestrator {
           }
         }
       }
-      this.audio.applyPeerVolumes(this.filterDeadPeerVolumes(peerVolumes));
-      this.applySpatialAudio(peerVolumes, cameraOnly, result.peerEcho);
+      const audibleVolumes = this.filterDeadPeerVolumes(peerVolumes);
+      audio.applyPeerVolumes(audibleVolumes);
+      this.applySpatialAudio(audibleVolumes, mode === 'camera', result.peerEcho);
     } catch (e) {
       console.error('[LoLProxChat] Volume computation failed:', e);
+      // Don't let a failed scoring request leave someone audible at an old
+      // location. The audio service's short grace window smooths this out.
+      if (this.session === session && this.audio === audio) {
+        audio.applyPeerVolumes({});
+        this.applySpatialAudio({}, mode === 'camera');
+      }
+    } finally {
+      this.volumeRequestRunning = false;
     }
-
-    this.broadcastOverlayState();
   }
 
   /**
@@ -1179,6 +1217,7 @@ export class Orchestrator {
    * predating alliesOnly) is dropped here.
    */
   private async applyLostVolumes(): Promise<void> {
+    if (this.volumeRequestRunning) return;
     const session = this.session;
     const seen = getAllyProximity() ? this.tracking?.getLastSeenPosition(LOST_ALLY_ANCHOR_MS) ?? null : null;
     if (!seen || !session || !this.volumeClient) {
@@ -1192,6 +1231,7 @@ export class Orchestrator {
         Math.round(seen.x) + ', ' + Math.round(seen.y) + ')');
       this.lostAnchor = seen;
     }
+    this.volumeRequestRunning = true;
     let result: { peerVolumes: Record<string, number> };
     try {
       result = await this.volumeClient.computeVolumes(
@@ -1199,8 +1239,10 @@ export class Orchestrator {
     } catch (e) {
       console.error('[LoLProxChat] Volume computation failed:', e);
       this.applyTeamOnlyVolumes();
+      this.volumeRequestRunning = false;
       return;
     }
+    this.volumeRequestRunning = false;
     // The game ended while we waited.
     if (!this.audio || this.session !== session) return;
     const allies: Record<string, number> = {};
@@ -1344,6 +1386,19 @@ export class Orchestrator {
     if (!name || name === this.localSummonerName) return;
     this.replayParticipants.add(name);
     this.refreshReplayConsent();
+  }
+
+  /** Start media negotiation as soon as signaling confirms room membership.
+   *  Do not make the voice handshake wait for minimap tracking to send the
+   *  first presence/position update. */
+  private handlePeerJoined(name: string): void {
+    if (!name || name === this.localSummonerName || !this.session || !this.audio) return;
+    this.handleReplayPeerJoined(name);
+    if (this.audio.hasPeer(name)) return;
+    const isInitiator = this.localSummonerName < name;
+    void this.audio.connectToPeer(name, isInitiator).catch((e) => {
+      console.error('[LoLProxChat] Failed to connect to discovered peer:', name, e);
+    });
   }
 
   private refreshReplayConsent(): void {

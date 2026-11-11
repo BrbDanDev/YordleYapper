@@ -45,7 +45,9 @@ export class VolumeClient {
     deadVoiceMode: 'off' | 'ghosts' | 'ghosts-nearby' = 'ghosts',
   ): Promise<VolumeResponse> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    // Volume scoring is polled separately from the 10 Hz position stream;
+    // bound failures so stale gains don't linger for multiple seconds.
+    const timeoutId = setTimeout(() => controller.abort(), 1500);
 
     const startedAt = performance.now();
     let succeeded = false;

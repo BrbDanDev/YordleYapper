@@ -93,6 +93,7 @@ export class PeerConnection {
   private remoteStream: MediaStream = new MediaStream();
   private audioElement: HTMLAudioElement;
   private processedElement: HTMLAudioElement;
+  private effectSource: MediaStreamAudioSourceNode | null = null;
   private effectContext: AudioContext | null = null;
   private effectGain: GainNode | null = null;
   private lowPass: BiquadFilterNode | null = null;
@@ -180,8 +181,10 @@ export class PeerConnection {
     this.pc.ontrack = (event) => {
       console.log('[WebRTC] Got remote track from', remoteName, 'kind:', event.track.kind);
       this.remoteStream.addTrack(event.track);
-      this.attachEffectsGraph();
-      this.attachAppTap();
+      // App Audio already owns the filtered/spatialized Web Audio path. Do not
+      // build a second per-peer AudioContext that is muted and discarded.
+      if (this.appOut) this.attachAppTap();
+      else this.attachEffectsGraph();
       // Ensure audio plays (autoplay may be blocked by Chromium policy)
       this.tryPlay();
       // Re-apply the output device now that the element has a live track.
@@ -266,7 +269,7 @@ export class PeerConnection {
   }
 
   private attachEffectsGraph(): void {
-    if (this.effectContext || this.remoteStream.getAudioTracks().length === 0) return;
+    if (this.appOut || this.effectContext || this.remoteStream.getAudioTracks().length === 0) return;
     try {
       const ctx = new AudioContext();
       const source = ctx.createMediaStreamSource(this.remoteStream);
@@ -295,6 +298,7 @@ export class PeerConnection {
       mix.connect(destination);
       this.processedElement.srcObject = destination.stream;
       this.effectContext = ctx;
+      this.effectSource = source;
       this.highPass = highPass;
       this.lowPass = lowPass;
       this.panner = panner;
@@ -360,10 +364,15 @@ export class PeerConnection {
     this.appTap?.disconnect();
     this.appTap = null;
     this.appOut = out;
+    if (out) {
+      this.disposeEffectsGraph();
+      this.attachAppTap();
+    }
+    else this.attachEffectsGraph();
     this.processedElement.muted = !!out || this.muted;
     this.audioElement.muted = !!out || !this.effectsGraphFailed || this.muted;
-    this.attachAppTap();
     this.applyGain(this.smoothedVolume ?? this.targetVolume);
+    if (!out) void this.applySinkId();
   }
 
   private attachAppTap(): void {
@@ -380,7 +389,9 @@ export class PeerConnection {
    * whether or not the volume is changing (an ally sits at 1.0 all game).
    */
   private ensurePlaying(nowMs: number): void {
-    const output = this.effectsGraphFailed ? this.audioElement : this.processedElement;
+    // App Audio routes through the native mixer, but Chromium still needs the
+    // muted source element playing to keep pulling the WebRTC remote track.
+    const output = this.appOut || this.effectsGraphFailed ? this.audioElement : this.processedElement;
     if (this.muted || !this.targetVolume || !output.paused) return;
     if (this.remoteStream.getAudioTracks().length === 0) return;
     if (nowMs - this.lastPlayRetryAt < PeerConnection.PLAY_RETRY_MS) return;
@@ -547,11 +558,23 @@ export class PeerConnection {
    */
   getAudioLevel(): number {
     let level = 0;
+    const now = performance.now();
     for (const r of this.pc.getReceivers()) {
       if (r.track?.kind !== 'audio' || typeof r.getSynchronizationSources !== 'function') continue;
-      for (const s of r.getSynchronizationSources()) level = Math.max(level, s.audioLevel ?? 0);
+      for (const s of r.getSynchronizationSources()) {
+        // Synchronization sources retain their last packet sample briefly;
+        // do not let an old non-zero sample keep the overlay stuck on.
+        if (!Number.isFinite(s.timestamp) || now - s.timestamp > 350 || now < s.timestamp) continue;
+        level = Math.max(level, s.audioLevel ?? 0);
+      }
     }
     return level;
+  }
+
+  /** Current (smoothed) output gain, for indicators that should reflect audible speech. */
+  getAudibleGain(): number {
+    if (this.muted) return 0;
+    return Math.max(0, Math.min(1, this.smoothedVolume ?? this.targetVolume));
   }
 
   mute(): void {
@@ -584,15 +607,41 @@ export class PeerConnection {
     this.pc.close();
     this.audioElement.pause();
     this.audioElement.srcObject = null;
-    const finish = (): void => {
-      this.processedElement.pause();
-      this.processedElement.srcObject = null;
-      this.audioDestination?.stream.getTracks().forEach(t => t.stop());
-      void this.effectContext?.close().catch(() => undefined);
-      this.effectContext = null;
-    };
+    const finish = (): void => this.disposeEffectsGraph();
     if (reverbTailMs > 0) window.setTimeout(finish, reverbTailMs);
     else finish();
+  }
+
+  /** Release the filtered path when App Audio takes over, or when this peer closes. */
+  private disposeEffectsGraph(): void {
+    if (this.reverbTailTimer !== null) window.clearTimeout(this.reverbTailTimer);
+    this.reverbTailTimer = null;
+    this.effectSource?.disconnect();
+    this.highPass?.disconnect();
+    this.effectGain?.disconnect();
+    this.lowPass?.disconnect();
+    this.panner?.disconnect();
+    this.dryGain?.disconnect();
+    this.reverbSend?.disconnect();
+    this.reverb?.disconnect();
+    this.reverbGain?.disconnect();
+    this.processedElement.pause();
+    this.processedElement.srcObject = null;
+    this.audioDestination?.stream.getTracks().forEach((track) => track.stop());
+    const context = this.effectContext;
+    this.effectContext = null;
+    void context?.close().catch(() => undefined);
+    this.effectSource = null;
+    this.highPass = null;
+    this.effectGain = null;
+    this.lowPass = null;
+    this.panner = null;
+    this.dryGain = null;
+    this.reverbSend = null;
+    this.reverb = null;
+    this.reverbGain = null;
+    this.audioDestination = null;
+    this.effectsGraphFailed = false;
   }
 
   // Periodic getStats snapshot — selected candidate pair, RTT, bytes flowing.

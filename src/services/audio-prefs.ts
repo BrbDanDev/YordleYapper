@@ -1,9 +1,6 @@
-// Panel toggles: the "ally proximity" and "voice on camera" audio settings,
-// and shared RESET (bottom of the file). The two audio toggles default ON
-// since v0.5.18, so each is stored explicitly as '1' or '0' and a missing key
-// reads as the default. Before v0.5.18 they defaulted off and "off" was stored
-// by removing the key, so an install that had turned one off reads as on after
-// the update; there is no way to tell the two apart.
+// Panel toggles: ally proximity, voice on camera, and shared RESET (below).
+// Values are stored explicitly as '1' or '0'; a missing key reads as its
+// current default.
 
 import { setForceTurnRelay } from './privacy';
 import type { RoomHostOptions } from '../core/room-policy';
@@ -96,15 +93,25 @@ export function setAllyProximity(enabled: boolean): void {
 // that became default-on then: Camera mode, Shared RESET, App audio and Hide
 // IP (privacy.ts).
 const AUDIO_DEFAULTS_KEY = 'lolproxchat.audioDefaultsApplied';
-const AUDIO_DEFAULTS_VERSION = '2';
+const AUDIO_DEFAULTS_VERSION = '3';
 
 /** Returns whether it changed anything this time. Never throws. */
 export function applyAudioDefaultsOnce(): boolean {
   try {
-    if (localStorage.getItem(AUDIO_DEFAULTS_KEY) === AUDIO_DEFAULTS_VERSION) return false;
+    const previousVersion = localStorage.getItem(AUDIO_DEFAULTS_KEY);
+    if (previousVersion === AUDIO_DEFAULTS_VERSION) return false;
+    // Camera-only and voice-on-camera defaults made ordinary proximity audio
+    // behave like screen/camera chat on first launch. Migrate v2 installs to
+    // champion-based nearby voice; users can still select either camera mode.
+    if (previousVersion === '2') {
+      writeToggle(CAMERA_ONLY_KEY, false);
+      writeToggle(CAMERA_LISTEN_KEY, false);
+      localStorage.setItem(AUDIO_DEFAULTS_KEY, AUDIO_DEFAULTS_VERSION);
+      return true;
+    }
     writeToggle(ALLY_PROXIMITY_KEY, true);
-    writeToggle(CAMERA_LISTEN_KEY, true);
-    writeToggle(CAMERA_ONLY_KEY, true);
+    writeToggle(CAMERA_LISTEN_KEY, false);
+    writeToggle(CAMERA_ONLY_KEY, false);
     writeToggle(VISIBLE_ENEMIES_KEY, true);
     writeToggle(SHARED_RESET_KEY, true);
     writeToggle(APP_AUDIO_KEY, true);
@@ -142,8 +149,7 @@ export function setCameraListen(enabled: boolean): void {
 // inside your camera rectangle, and nobody else; be heard by whoever has your
 // icon inside theirs. It replaces proximity and voice on camera while on, and
 // needs no position of your own, so it does not depend on the tracker finding
-// your icon. Default on in this build, which exists for it; stored like the
-// toggles above, a missing key reads as on.
+// your icon. It is optional; Nearby Voices is the default.
 const CAMERA_ONLY_KEY = 'lolproxchat.cameraOnly';
 const RIFT_VOICES_KEY = 'lolproxchat.riftVoices';
 const SPATIAL_AUDIO_KEY = 'lolproxchat.spatialAudio';

@@ -155,6 +155,8 @@ export class SignalingService {
             ...event, startedAt: Number(event.startedAt) - offsetMs, endsAt: Number(event.endsAt) - offsetMs,
           })) : [];
           const snapshotPeers: string[] = Array.isArray(msg.peers) ? msg.peers.filter((n: unknown): n is string => typeof n === 'string') : [];
+          console.log('[Signaling] Room snapshot: peers=' + snapshotPeers.length +
+            ' server=' + (typeof msg.protocolVersion === 'number' ? 'v' + msg.protocolVersion : 'legacy'));
           const legacySnapshot = typeof msg.protocolVersion !== 'number' && typeof msg.host !== 'string';
           if (legacySnapshot) {
             // The legacy service preserves room insertion order in `peers` but

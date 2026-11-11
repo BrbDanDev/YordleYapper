@@ -6,6 +6,17 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 - Use `YordleYapper.exe` as the branded Windows download name while retaining the `lolproxchat.exe` compatibility asset for existing updaters.
 
+## [v0.9.4] - 2026-11-10
+
+### Fixed
+- Start WebRTC negotiation as soon as a peer is discovered in the signaling room, without waiting for minimap tracking to produce a position update.
+- Avoid creating a second, muted per-peer Web Audio graph when App Audio already provides the filtered output; release that graph when switching to App Audio.
+- Log the number of peers in each signaling room snapshot to distinguish room-discovery problems from voice connection problems.
+
+### Reviewed
+- Compared the current voice path with the original v0.5.24 baseline. Position-based server scoring and camera modes are later changes; the saved Nov 10 logs showed repeated volume-request timeouts but no peer discovery or WebRTC negotiation in those captured sessions.
+- The configured default server's health and volume endpoints responded during review. Those checks did not reproduce the per-install timeout path, so actual multiplayer verification remains necessary.
+
 ## [v0.9.2] — 2026-11-10
 
 ### Added

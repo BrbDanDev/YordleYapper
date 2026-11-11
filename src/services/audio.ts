@@ -780,7 +780,10 @@ export class AudioService {
       if (this.mutedPlayers.has(name)) continue;
       const vol = computeFinalPeerVolume(this.lastProximityVolumes.get(name) ?? 0, this.settings.playerVolumes[name] ?? 1.0);
       if (vol <= 0) continue;
-      out.set(name, peer.getAudioLevel?.() ?? 0);
+      // Reflect the signal after its current proximity/player gain. A remote
+      // speaker at 2% output should not light the indicator as if full volume.
+      const audibleGain = peer.getAudibleGain?.() ?? vol;
+      out.set(name, (peer.getAudioLevel?.() ?? 0) * audibleGain);
     }
     return out;
   }

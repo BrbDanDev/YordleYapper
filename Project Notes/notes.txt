@@ -193,3 +193,15 @@ IMPLEMENTED IN v0.9.2
 - Added Windows native edge resizing for the overlay and removed automatic height changes that counteracted user resize.
 - Windows release and server companion are in Finished Builds/v0.9.2; BUILD.txt records size and SHA-256. Production frontend, bundled server, and Tauri release builds passed. The standalone server passed a local health check. No automated tests or multi-PC League playtest were run.
 - v0.9.2 self-host security/availability limitation: the ngrok URL is public while active and acts as an invite secret. Default TURN credentials can still be requested from the existing service if needed; room signaling, room names, positions, and server volume calculations use the selected host endpoint.
+
+IMPLEMENTED IN v0.9.3
+- Fixed the standard listening default: proximity is now champion-based Nearby Voices rather than camera-only, and Voice on Camera starts off. Existing v0.9.2 installs migrate those two defaults once; other preferences are preserved.
+- Decoupled server volume scoring from the 10 Hz position loop. Position and overlay updates continue while the HTTP API is slow; scoring requests are coalesced and limited to about 3 Hz for compatibility with the older hosted server's per-IP limit.
+- The speaking indicator now uses fresh WebRTC audio samples and scales them by current audible output gain, avoiding stale/out-of-range indicators and respecting proximity/player volume. Failed/stalled volume requests now fade peers out instead of preserving audio at an old location; the request timeout is 1.5 s.
+- `npm run build` passed. Windows release build passed with `npx tauri build --no-bundle`. Packaged in Finished Builds/v0.9.3; BUILD.txt records hashes. No automated tests run; multiplayer audio quality still needs a two-client in-game playtest.
+IMPLEMENTED IN v0.9.4
+- Compared the shipped voice path with the original v0.5.24 baseline. The post-baseline effects build created a per-peer Web Audio context even when App Audio already supplied the effects/output path; the duplicate muted graph is now skipped and disposed when switching to App Audio.
+- WebRTC negotiation previously waited for a peer's first position broadcast after room discovery. It now begins on the signaling room snapshot / peer_joined event, so minimap tracking startup cannot hold up voice connection.
+- Added a peer count + legacy/protocol label on every signaling room snapshot for easier diagnosis of mismatched automatic rooms vs failed WebRTC.
+- On-device Nov 10 debug archives contained repeated volume request AbortErrors and no peer-discovery or WebRTC entries in those captured sessions. A direct health check and volume request to the configured default host completed during review. This does not establish what happens in a two-client match, so multiplayer playback remains unverified.
+- `npm run build` and `npx tauri build --no-bundle` passed for v0.9.4; no automated tests run. The build is staged in Finished Builds/v0.9.4 and its hashes are recorded in BUILD.txt.
