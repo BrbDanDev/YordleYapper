@@ -6,6 +6,16 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 - Use `YordleYapper.exe` as the branded Windows download name while retaining the `lolproxchat.exe` compatibility asset for existing updaters.
 
+## [v0.9.6] - 2026-11-10
+
+### Fixed
+- Keep Rift camera listening active when Rift stereo direction is also set to follow the camera. Camera audio adds an incoming listening area; it never moves the local player's outgoing voice position from their champion.
+
+### Changed
+- Show hearing controls only in modes where they apply: visible-enemy muting in Nearby, distance/hidden filters in Nearby and Rift, camera listening in Nearby and Rift, and Rift stereo-direction controls only in Rift.
+- Replace bundled settings descriptions with short mode and control-specific explanations. Dead-chat help now describes only the selected behavior, and host enforcement is called out separately.
+- Explain camera mutual opt-in, receive-only behavior, and the distinction between camera-based hearing range and camera-based stereo direction.
+
 ## [v0.9.5] - 2026-11-10
 
 ### Added

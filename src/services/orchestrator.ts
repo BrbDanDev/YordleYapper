@@ -1031,7 +1031,11 @@ export class Orchestrator {
         getAllyProximity(),
         false,
         mode === 'rift',
-        mode === 'rift' && getRiftStereoFromCamera() &&
+        // Camera-listening uses the published camera as an additional source
+        // for incoming range, even when Rift stereo direction follows it.
+        // Only request champion-only scoring when the camera is for panning
+        // direction and the user did not enable camera listening.
+        mode === 'rift' && getRiftStereoFromCamera() && !getCameraListen() &&
           (hostSpatialOn || (!hostSpatialOff && getSpatialAudio())),
         this.effectiveDeadVoiceMode(),
       );

@@ -38,27 +38,28 @@
           <select id="hearing-mode">
             <option value="camera" data-i18n="settings.modeScreen">On-screen voices</option>
             <option value="nearby" data-i18n="settings.modeNearby">Nearby voices</option>
-            <option value="rift">Rift Voices (loudness + spatial)</option>
+            <option value="rift">Rift Voices (loudness, filters + reverb)</option>
           </select>
         </div>
         <p id="hearing-mode-description" class="setting-hint" aria-live="polite"></p>
         <div class="setting-row setting-row-stack"><label for="dead-voice-mode">When I die</label><select id="dead-voice-mode"><option value="ghosts">Ghost chat</option><option value="ghosts-nearby">Ghosts + nearby living</option><option value="off">No dead chat</option></select></div>
-        <p class="setting-hint">Ghost chat connects dead players globally, adds a light reverb, and lets you listen from your camera. Nearby living lets you also hear living players from your camera and lets them hear you near your death location. Your host may force a room-wide choice.</p>
+        <p id="dead-voice-description" class="setting-hint" aria-live="polite"></p>
+        <p class="setting-hint" data-i18n="settings.deadModeHostHint">A private-room host can force the dead-chat choice for everyone.</p>
         <div id="visible-enemies-row" class="setting-row">
           <label data-i18n="settings.visibleOnly">Only hear visible enemies</label>
           <button id="btn-visible-enemies" class="toggle-btn" aria-pressed="true">ON</button>
         </div>
         <p id="visible-enemies-hint" class="setting-hint" data-i18n="settings.visibleOnlyHint">Uses minimap vision. Enemies hidden by fog, brush, or invisibility go quiet.</p>
-        <div class="setting-row">
+        <div id="ally-proximity-row" class="setting-row">
           <label data-i18n="settings.allyProximity">Teammate distance audio</label>
           <button id="btn-ally-proximity" class="toggle-btn">ON</button>
         </div>
-        <p class="setting-hint" data-i18n="settings.allyProximityHintShort">ON fades teammates with distance. OFF keeps your team at full volume anywhere.</p>
+        <p id="ally-proximity-hint" class="setting-hint" data-i18n="settings.allyProximityHintShort">ON fades teammates with distance. OFF keeps your team at full volume anywhere.</p>
         <div id="camera-listen-row" class="setting-row">
-          <label data-i18n="settings.cameraListen">Also hear from camera</label>
+          <label id="camera-listen-label" data-i18n="settings.cameraListen">Also hear from camera</label>
           <button id="btn-camera-listen" class="toggle-btn">ON</button>
         </div>
-        <p id="camera-listen-hint" class="setting-hint" data-i18n="settings.cameraListenHintShort">Adds voices around your camera view. This can reveal activity beyond your champion's vision.</p>
+        <p id="camera-listen-hint" class="setting-hint" aria-live="polite"></p>
         <div id="rift-stereo-camera-row" class="setting-row hidden">
           <label data-i18n="settings.riftStereoCamera">Rift stereo follows camera</label>
           <button id="btn-rift-stereo-camera" class="toggle-btn" aria-pressed="false">OFF</button>
@@ -132,10 +133,10 @@
         <div class="setting-row"><label data-i18n="settings.language">Language</label><select id="language"></select></div>
         <div class="setting-row"><label data-i18n="settings.inputDevice">Microphone</label><select id="input-device"><option value="" data-i18n="settings.default">Default</option></select></div>
         <div class="setting-row"><label data-i18n="settings.outputDevice">Headphones / speakers</label><select id="output-device"><option value="" data-i18n="settings.default">Default</option></select></div>
-        <div class="setting-row"><label for="btn-spatial-audio">3D stereo voice</label><button id="btn-spatial-audio" class="toggle-btn" aria-pressed="true">ON</button></div>
-        <p class="setting-hint">Moves voices around you with HRTF headphones audio. Turn off for mono.</p>
-        <div class="setting-row"><label for="btn-voice-muffling">Occlusion voice filter</label><button id="btn-voice-muffling" class="toggle-btn" aria-pressed="true">ON</button></div>
-        <p class="setting-hint">Low-pass filters distant or minimap-hidden voices. They may be in fog, brush, or invisible; the minimap cannot tell which.</p>
+        <div id="spatial-audio-row" class="setting-row"><label for="btn-spatial-audio">3D stereo voice</label><button id="btn-spatial-audio" class="toggle-btn" aria-pressed="true">ON</button></div>
+        <p id="spatial-audio-hint" class="setting-hint">Moves voices around you with HRTF headphones audio. Turn off for mono.</p>
+        <div id="voice-muffling-row" class="setting-row"><label for="btn-voice-muffling">Distance and hidden voice filter</label><button id="btn-voice-muffling" class="toggle-btn" aria-pressed="true">ON</button></div>
+        <p id="voice-muffling-hint" class="setting-hint">Low-pass and high-pass filters make distant or minimap-hidden voices sound muffled.</p>
         <div class="setting-row"><label data-i18n="settings.appAudio">Separate OBS audio</label><button id="btn-app-audio" class="toggle-btn">ON</button></div>
         <p class="setting-hint" data-i18n="settings.appAudioHintShort">For OBS application capture. Headphones help prevent echo.</p>
         <div class="setting-row"><label data-i18n="settings.inputMode">Microphone mode</label><select id="input-mode"><option value="always" data-i18n="settings.alwaysOpen">Always on</option><option value="ptt" data-i18n="settings.pushToTalk">Push to talk</option></select></div>

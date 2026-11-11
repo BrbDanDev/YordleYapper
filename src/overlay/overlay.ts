@@ -480,6 +480,7 @@ btnAppAudio.addEventListener('click', () => {
 });
 
 const btnSpatialAudio = document.getElementById('btn-spatial-audio') as HTMLButtonElement;
+const spatialAudioHint = document.getElementById('spatial-audio-hint')!;
 function syncSpatialAudioButton(): void {
   const on = getSpatialAudio();
   btnSpatialAudio.textContent = onOff(on);
@@ -494,6 +495,8 @@ btnSpatialAudio.addEventListener('click', () => {
 });
 
 const btnVoiceMuffling = document.getElementById('btn-voice-muffling') as HTMLButtonElement;
+const voiceMufflingRow = document.getElementById('voice-muffling-row')!;
+const voiceMufflingHint = document.getElementById('voice-muffling-hint')!;
 function syncVoiceMufflingButton(): void {
   const on = getVoiceMuffling();
   btnVoiceMuffling.textContent = onOff(on);
@@ -630,6 +633,9 @@ const visibleEnemiesRow = document.getElementById('visible-enemies-row')!;
 const visibleEnemiesHint = document.getElementById('visible-enemies-hint')!;
 const cameraListenRow = document.getElementById('camera-listen-row')!;
 const cameraListenHint = document.getElementById('camera-listen-hint')!;
+const cameraListenLabel = document.getElementById('camera-listen-label')!;
+const allyProximityRow = document.getElementById('ally-proximity-row')!;
+const allyProximityHint = document.getElementById('ally-proximity-hint')!;
 const riftStereoCameraRow = document.getElementById('rift-stereo-camera-row')!;
 const riftStereoCameraHint = document.getElementById('rift-stereo-camera-hint')!;
 const btnRiftStereoCamera = document.getElementById('btn-rift-stereo-camera') as HTMLButtonElement;
@@ -652,12 +658,22 @@ function syncHearingMode(): void {
   const rift = hostForcedMode ? hostForcedMode === 'rift' : getRiftVoices();
   hearingMode.value = hostForcedMode ?? (camera ? 'camera' : rift ? 'rift' : 'nearby');
   hearingModeDescription.textContent = t(camera ? 'settings.modeScreenDescription' : rift ? 'settings.modeRiftDescription' : 'settings.modeNearbyDescription');
-  visibleEnemiesRow.classList.toggle('hidden', camera);
-  visibleEnemiesHint.classList.toggle('hidden', camera);
+  const visibleFilter = !camera && !rift;
+  visibleEnemiesRow.classList.toggle('hidden', !visibleFilter);
+  visibleEnemiesHint.classList.toggle('hidden', !visibleFilter);
+  allyProximityRow.classList.toggle('hidden', camera);
+  allyProximityHint.classList.toggle('hidden', camera);
   cameraListenRow.classList.toggle('hidden', camera);
+  cameraListenLabel.textContent = t(rift ? 'settings.cameraListenRift' : 'settings.cameraListenNearby');
+  cameraListenHint.textContent = t(rift ? 'settings.cameraListenRiftHint' : 'settings.cameraListenNearbyHint');
   cameraListenHint.classList.toggle('hidden', camera);
   riftStereoCameraRow.classList.toggle('hidden', !rift);
   riftStereoCameraHint.classList.toggle('hidden', !rift);
+  voiceMufflingRow.classList.toggle('hidden', camera);
+  voiceMufflingHint.classList.toggle('hidden', camera);
+  voiceMufflingHint.textContent = t(rift ? 'settings.riftMufflingHint' : 'settings.nearbyMufflingHint');
+  spatialAudioHint.textContent = t('settings.spatialAudioHint');
+  syncDeadVoiceDescription();
 }
 hearingMode.addEventListener('change', () => {
   setCameraOnly(hearingMode.value === 'camera');
@@ -667,8 +683,19 @@ hearingMode.addEventListener('change', () => {
 queueMicrotask(syncHearingMode);
 
 const deadVoiceModeSelect = document.getElementById('dead-voice-mode') as HTMLSelectElement;
+const deadVoiceDescription = document.getElementById('dead-voice-description')!;
+function syncDeadVoiceDescription(): void {
+  const selected = deadVoiceModeSelect?.value ?? getDeadVoiceMode();
+  const key: StringKey = selected === 'off' ? 'settings.deadOffDescription'
+    : selected === 'ghosts-nearby' ? 'settings.deadGhostsNearbyDescription' : 'settings.deadGhostsDescription';
+  deadVoiceDescription.textContent = t(key);
+}
 deadVoiceModeSelect.value = getDeadVoiceMode();
-deadVoiceModeSelect.addEventListener('change', () => setDeadVoiceMode(deadVoiceModeSelect.value as 'off' | 'ghosts' | 'ghosts-nearby'));
+deadVoiceModeSelect.addEventListener('change', () => {
+  setDeadVoiceMode(deadVoiceModeSelect.value as 'off' | 'ghosts' | 'ghosts-nearby');
+  syncDeadVoiceDescription();
+});
+syncDeadVoiceDescription();
 
 const voiceServerUrl = document.getElementById('voice-server-url') as HTMLInputElement;
 const voiceServerStatus = document.getElementById('voice-server-status')!;
