@@ -45,6 +45,7 @@ function fakeOut(): { out: AppAudioOutput; taps: FakeTap[] } {
         gain: -1,
         connected: true,
         setGain(v: number) { tap.gain = v; },
+        setVoiceEffects() {},
         disconnect() { tap.connected = false; },
       };
       taps.push(tap);
