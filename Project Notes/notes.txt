@@ -241,3 +241,9 @@ IMPLEMENTED IN v0.9.10
 - Tightened fall smoothing to meet the existing test target of under 0.5 seconds from audible to near-silent.
 - The v0.8.2 artifact exists locally but has no matching source commit/tag in this checkout; used the last available working source curve from v0.9.8 as reference.
 - Focused peer-volume / Rift / SDP tests, source/test type checks, and frontend build pass.
+
+IMPLEMENTED IN v0.9.11
+- Compared the research checkout's simple remote HTMLAudioElement playback with the current default App Audio route (WebAudio AudioWorklet -> Tauri IPC -> Rust jitter buffer). The research code does not have this native output bridge, so copying its playback path wholesale would discard current filters, 3D audio, and OBS routing.
+- Found the actual App Audio transport defect: its worklet allocated 2*chunk floats initially, then only chunk floats after transferring the first block, despite continuing to write interleaved stereo. The resulting half-size blocks caused dropped samples and starved/garbled native playback. Extracted the worklet source, fixed every reallocation to retain stereo size, and added a regression test covering multiple chunks.
+- Verified the configured production signaling server currently returns authenticated TURN URLs; actual multi-client connection/audio still needs an in-game test.
+- Worklet regression test, source/test type checks, frontend build, and Windows Tauri build pass.

@@ -4,6 +4,11 @@ All notable changes to this project are documented here. Format adapted from [Ke
 
 ## [Unreleased]
 
+## [v0.9.11] — 2026-11-12
+
+### Fixed
+- Fix the App Audio worklet rebuilding each transferred buffer at half the required stereo size. After the first 10 ms block, samples were dropped and WebRTC voice playback became choppy/robotic or silent. All outgoing PCM blocks now remain full-sized interleaved stereo.
+
 ## [v0.9.10] — 2026-11-11
 
 ### Fixed
@@ -745,6 +750,7 @@ Most of this release was contributed by a tester's friend, who reworked hearing 
 Initial public iteration: Overwolf → Tauri 2 migration, Supabase-stack → custom 1-container WebSocket signaling server, minimap CV pipeline (HSV color filter + blob detection + ONNX champion classifier), WebRTC P2P voice with AES-GCM encrypted position blobs computed server-side, in-app updater. See `docs/plans/` for the historical design + implementation documents from that period.
 
 [Unreleased]: https://github.com/danthi123/LoLProxChat/compare/v0.4.4...HEAD
+[v0.9.11]: https://github.com/danthi123/LoLProxChat/releases/tag/v0.9.11
 [v0.9.10]: https://github.com/danthi123/LoLProxChat/releases/tag/v0.9.10
 [v0.9.9]: https://github.com/danthi123/LoLProxChat/releases/tag/v0.9.9
 [v0.7.9]: https://github.com/danthi123/LoLProxChat/releases/tag/v0.7.9
